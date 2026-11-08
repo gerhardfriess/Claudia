@@ -13,7 +13,7 @@ py -3 -m http.server 8770 --directory "<dieser Ordner>"
 Dann http://localhost:8770 öffnen → in Chrome/Edge über das Installieren-Symbol in der Adressleiste als App installieren.
 
 ## Aufs Handy
-Ein Service Worker braucht HTTPS. Den Ordner z. B. auf GitHub Pages veröffentlichen, die URL am Handy öffnen und „Zum Startbildschirm hinzufügen“ wählen.
+Online: https://gerhardfriess.github.io/Claudia/ (Repo gerhardfriess/Claudia). Am Handy öffnen → „Zum Startbildschirm hinzufügen“ bzw. „App installieren“. Updates veröffentlichen: publish.bat doppelklicken.
 
 ## Daten
 - Alles bleibt lokal im Browser des jeweiligen Geräts (localStorage).
