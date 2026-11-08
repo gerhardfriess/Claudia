@@ -624,7 +624,7 @@ function contactsDialog() {
   }));
   count(); filter();
 }
-const APP_VERSION = '2026-11-08 · 8';
+const APP_VERSION = '2026-11-08 · 9';
 const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
 function contactEditDialog(c) {
   if (!c) return contactsDialog();
@@ -829,10 +829,19 @@ async function sendChat(text, prefillOnly = false, dictated = false) {
     if (!sdk) sdk = (await import(SDK_URL)).default;
     const client = new sdk({ apiKey: key, dangerouslyAllowBrowser: true });
     const model = S.settings.model;
+    // Systemprompt (enthält die Uhrzeit) einmal pro Anfrage festlegen. Denkblöcke gelten nur für genau den
+    // Systemprompt, mit dem sie entstanden sind – ältere Runden schicken wir daher ohne sie.
+    const system = systemPrompt();
+    const turnStart = S.chat.length - 1;
+    const history = () => S.chat.map((m, i) => {
+      if (m.role !== 'assistant' || i >= turnStart || !Array.isArray(m.content)) return m;
+      const content = m.content.filter(b => b.type !== 'thinking' && b.type !== 'redacted_thinking');
+      return { role: 'assistant', content: content.length ? content : [{ type: 'text', text: '…' }] };
+    }).filter(m => m.role === 'user' || m.role === 'assistant');
     for (let step = 0; step < 10; step++) {
       const params = {
-        model, max_tokens: 16000, system: systemPrompt(), tools: TOOLS,
-        messages: S.chat.filter(m => m.role === 'user' || m.role === 'assistant'),
+        model, max_tokens: 16000, system, tools: TOOLS,
+        messages: history(),
         thinking: { type: 'adaptive' }, output_config: { effort: S.settings.effort || 'low' },
       };
       // Bei einer Sicherheits-Ablehnung springt automatisch ein anderes Modell ein (nicht für Haiku verfügbar).
