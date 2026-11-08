@@ -387,35 +387,50 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null;
 function startDictation() {
   if (tab !== 'chat') go('chat');
-  if (rec) { rec.stop(); return; }
+  if (rec) { rec.stopNow(); return; }
   if (busy) return;
   if (!SR) {
     toast('Spracherkennung fehlt hier. Nutze das Mikrofon auf der Tastatur.');
     $('form[data-form=chat] textarea')?.focus(); return;
   }
-  speechSynthesis?.cancel();
+  // Läuft gerade noch die Vorlese-Stimme, braucht das iPhone einen Moment, bis das Mikrofon frei ist.
+  const wasSpeaking = 'speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending);
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
   const r = new SR();
   r.lang = 'de-DE'; r.continuous = true; r.interimResults = true;
   const base = ($('form[data-form=chat] textarea')?.value.trim() || '');
-  let heard = '';
+  let heard = '', done = false, gotAudio = false;
+  // Abschluss genau einmal – auch wenn der Browser "onend" verschluckt (kommt auf dem iPhone vor)
+  const finish = () => {
+    if (done) return; done = true;
+    if (rec === r) rec = null;
+    const txt = (($('form[data-form=chat] textarea')?.value) || '').trim();
+    if (heard && txt && S.settings.autoSend) sendChat(txt, false, true);
+    else { render(); const ta = $('form[data-form=chat] textarea'); if (ta) { ta.value = txt; grow(ta); ta.focus(); } }
+  };
+  r.onaudiostart = () => { gotAudio = true; };
   r.onresult = e => {
+    gotAudio = true;
     // Bei jedem Ereignis komplett neu zusammensetzen (vermeidet doppelte Wörter auf Android)
     heard = [...e.results].map(x => x[0].transcript).join(' ').replace(/\s+/g, ' ').trim();
     const ta = $('form[data-form=chat] textarea'); if (ta) { ta.value = (base ? base + ' ' : '') + heard; grow(ta); }
   };
   r.onerror = e => {
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Mikrofon ist nicht erlaubt');
+    else if (e.error === 'audio-capture') toast('Mikrofon ist belegt – bitte nochmal 🎙 tippen');
     else if (e.error !== 'no-speech' && e.error !== 'aborted') toast('Spracherkennung: ' + e.error);
   };
-  r.onend = () => {
-    rec = null;
-    const txt = (($('form[data-form=chat] textarea')?.value) || '').trim();
-    if (heard && txt && S.settings.autoSend) sendChat(txt, false, true);
-    else { render(); const ta = $('form[data-form=chat] textarea'); if (ta) { ta.value = txt; grow(ta); ta.focus(); } }
-  };
+  r.onend = finish;
+  r.stopNow = () => { try { r.stop(); } catch {} setTimeout(() => { if (!done) { try { r.abort(); } catch {} finish(); } }, 1500); };
   rec = r; render();
   const ta = $('form[data-form=chat] textarea'); if (ta) { ta.value = base; grow(ta); }
-  try { r.start(); } catch { rec = null; render(); }
+  const begin = () => {
+    if (done || rec !== r) return;
+    try { r.start(); } catch { done = true; rec = null; render(); toast('Spracherkennung startet nicht – bitte nochmal 🎙 tippen'); return; }
+    // Kommt nach 4 s kein Ton an, hängt die Erkennung: sauber beenden, damit 🎙 wieder geht
+    setTimeout(() => { if (!done && !gotAudio && rec === r) { try { r.abort(); } catch {} finish(); toast('Mikrofon hat nicht reagiert – bitte nochmal 🎙 tippen'); } }, 4000);
+  };
+  if (wasSpeaking) setTimeout(begin, 400); else begin();
 }
 function speak(text) {
   if (!('speechSynthesis' in window) || !text) return;
@@ -641,7 +656,7 @@ function contactsDialog() {
   }));
   count(); filter();
 }
-const APP_VERSION = '2026-11-08 · 10';
+const APP_VERSION = '2026-11-08 · 11';
 const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
 function contactEditDialog(c) {
   if (!c) return contactsDialog();
