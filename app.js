@@ -204,6 +204,36 @@ function render() {
   if (tab === 'chat') scrollChat();
 }
 
+// ---------- Kalender (.ics mit Alarm) – klingelt über den Gerätekalender auch bei geschlossener App ----------
+const canCal = t => t && !t.done && t.due && t.time;
+function icsFor(t) {
+  const txt = s => String(s || '').replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1');
+  const loc = (d, hm) => d.replace(/-/g, '') + 'T' + hm.replace(':', '') + '00';   // Ortszeit des Geräts
+  const end = new Date(`${t.due}T${t.time}`); end.setMinutes(end.getMinutes() + 15);
+  const pad = n => String(n).padStart(2, '0');
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Claudia//DE', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'BEGIN:VEVENT', `UID:${t.id}@claudia`, `DTSTAMP:${stamp}`,
+    `DTSTART:${loc(t.due, t.time)}`, `DTEND:${loc(iso(end), pad(end.getHours()) + ':' + pad(end.getMinutes()))}`,
+    `SUMMARY:${txt(t.title)}`, `DESCRIPTION:${txt('Erinnerung von Claudia (' + t.cat + ')')}`,
+    'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${txt(t.title)}`, 'TRIGGER:PT0M', 'END:VALARM',
+    'END:VEVENT', 'END:VCALENDAR'].join('\r\n') + '\r\n';
+}
+function addToCalendar(id) {
+  const t = S.tasks.find(x => x.id === id);
+  if (!canCal(t)) { toast('Dafür braucht die Aufgabe Datum und Uhrzeit'); return; }
+  const blob = new Blob([icsFor(t)], { type: 'text/calendar;charset=utf-8' });
+  const name = (t.title.replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 40) || 'Erinnerung') + '.ics';
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = name; a.rel = 'noopener';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  t.cal = true; save(); render();
+  toast('Termin wird geöffnet – dort „Hinzufügen“ tippen');
+}
+const calBtn = t => canCal(t)
+  ? `<button class="mini cal ${t.cal ? 'on' : ''}" data-act="ics" data-id="${t.id}" aria-label="In Kalender eintragen" title="${t.cal ? 'Schon im Kalender – nochmal eintragen' : 'In Kalender eintragen (Alarm auch bei geschlossener App)'}">📅</button>` : '';
+
 function taskRow(t) {
   const pills = [];
   if (isOverdue(t)) pills.push(`<span class="pill over">überfällig · ${fmtDate(t.due)}</span>`);
@@ -215,7 +245,7 @@ function taskRow(t) {
     <div class="body" data-act="edit-task" data-id="${t.id}" style="cursor:pointer">
       <div class="title">${esc(t.title)}</div><div class="meta">${pills.join('')}</div>
     </div>
-    <button class="mini" data-act="del-task" data-id="${t.id}" aria-label="Löschen" title="Löschen">✕</button>
+    ${calBtn(t)}<button class="mini" data-act="del-task" data-id="${t.id}" aria-label="Löschen" title="Löschen">✕</button>
   </div>`;
 }
 const quickAdd = (ph = 'Neue Aufgabe … (Enter)') => `<form class="quick" data-form="quick-task">
@@ -290,7 +320,11 @@ function viewChat() {
       for (const b of m.content) {
         if (b.type === 'text' && b.text.trim()) parts.push(`<div class="msg bot">${esc(b.text.trim())}</div>`);
         if (b.type === 'tool_use' && b.name === 'prepare_message') parts.push(draftCard(b));
-        else if (b.type === 'tool_use') parts.push(`<div class="msg tool">✦ ${esc(TOOL_LABEL[b.name] || b.name)}</div>`);
+        else if (b.type === 'tool_use') {
+          const t = (b.name === 'add_task' || b.name === 'update_task') ? taskOfTool(b) : null;
+          parts.push(`<div class="msg tool">✦ ${esc(TOOL_LABEL[b.name] || b.name)}${canCal(t)
+            ? ` · <button class="linkbtn" data-act="ics" data-id="${t.id}">📅 ${t.cal ? 'nochmal in' : 'In'} Kalender</button>` : ''}</div>`);
+        }
       }
     } else if (m.role === 'ui-error') parts.push(`<div class="msg err">${esc(m.text)}</div>`);
   }
@@ -308,6 +342,16 @@ function viewChat() {
     <textarea name="q" placeholder="${rec ? 'Ich höre zu …' : 'Nachricht an Claudia …'}" rows="1" ${busy ? 'disabled' : ''}></textarea>
     <button type="button" class="btn mic ${rec ? 'listening' : ''}" data-act="dictate" ${busy ? 'disabled' : ''} aria-label="Diktieren" title="Diktieren">${rec ? '■' : '🎙'}</button>
     <button class="btn" ${busy ? 'disabled' : ''} aria-label="Senden">➤</button></form></div>`;
+}
+
+// Aufgabe, die ein Werkzeug-Aufruf angelegt/geändert hat (ID steht im zugehörigen Werkzeug-Ergebnis)
+function taskOfTool(b) {
+  if (b.input?.id) return S.tasks.find(x => x.id === b.input.id) || null;
+  for (const m of S.chat) if (m.role === 'user' && Array.isArray(m.content))
+    for (const r of m.content) if (r.type === 'tool_result' && r.tool_use_id === b.id && !r.is_error) {
+      try { const id = JSON.parse(r.content).id; return S.tasks.find(x => x.id === id) || null; } catch { return null; }
+    }
+  return null;
 }
 
 // ---------- Nachrichten-Entwürfe (WhatsApp) ----------
@@ -484,6 +528,7 @@ function act(a, d) {
     case 'edit-note': return noteDialog(S.notes.find(n => n.id === d.id));
     case 'new-chat': S.chat = []; S.draftEdits = {}; S.draftSent = {}; save(); return render();
     case 'dictate': return startDictation();
+    case 'ics': return addToCalendar(d.id);
     case 'wa': return openWhatsApp(d.id);
     case 'mail': return openMail(d.id);
     case 'copy': navigator.clipboard?.writeText(draftText(d.id)).then(() => toast('Kopiert'), () => toast('Kopieren nicht möglich')); return;
@@ -518,8 +563,16 @@ function taskDialog(t) {
     <div class="row"><label>Fällig am<input type="date" name="due" value="${esc(t.due)}"></label>
     <label>Uhrzeit (Erinnerung)<input type="time" name="time" value="${esc(t.time)}"></label></div>
     <label>Kategorie<select name="cat">${['Privat', 'Geschäftlich'].map(c => `<option ${c === t.cat ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
-    <div class="actions"><button class="btn ghost" value="cancel" formnovalidate>Abbrechen</button><button class="btn" value="ok">Speichern</button></div>`,
-    (v, fd) => { if (v !== 'ok') return; Object.assign(t, { title: fd.get('title').trim(), due: fd.get('due'), time: fd.get('time'), cat: fd.get('cat') }); S.notified = S.notified.filter(x => x !== t.id); save(); });
+    <div class="hint">📅 trägt die Aufgabe mit Alarm in den Kalender des Geräts ein – der klingelt auch, wenn Claudia geschlossen ist.</div>
+    <div class="actions"><button class="btn ghost" value="cal" style="margin-right:auto">📅 Speichern + Kalender</button><button class="btn ghost" value="cancel" formnovalidate>Abbrechen</button><button class="btn" value="ok">Speichern</button></div>`,
+    (v, fd) => {
+      if (v !== 'ok' && v !== 'cal') return;
+      const changed = t.due !== fd.get('due') || t.time !== fd.get('time') || t.title !== fd.get('title').trim();
+      Object.assign(t, { title: fd.get('title').trim(), due: fd.get('due'), time: fd.get('time'), cat: fd.get('cat') });
+      if (changed) t.cal = false;
+      S.notified = S.notified.filter(x => x !== t.id); save();
+      if (v === 'cal') setTimeout(() => addToCalendar(t.id));
+    });
 }
 function noteDialog(n) {
   openDialog(`<h3>${n ? 'Notiz bearbeiten' : 'Neue Notiz'}</h3>
@@ -665,7 +718,7 @@ function contactsDialog() {
   }));
   count(); filter();
 }
-const APP_VERSION = '2026-11-08 · 12';
+const APP_VERSION = '2026-11-08 · 13';
 const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
 function contactEditDialog(c) {
   if (!c) return contactsDialog();
@@ -852,6 +905,7 @@ Diktat: Nachrichten, die mit "[Diktiert]" beginnen, hat der Nutzer gesprochen; d
 Sobald der Empfänger feststeht: list_contacts prüfen, dann prepare_message mit dem genauen Namen aus der Liste. Empfänger können auch über ihren Alias genannt werden ("meine Frau", "meine Tochter"); der Kontakt mit ich=true ist der Nutzer selbst ("schick mir", "an mich"). Ist der Name unklar (mehrere Treffer), kurz nachfragen.
 Sprache: Hat der Empfänger eine Sprache hinterlegt, schreibst du die Nachricht in dieser Sprache – sinngemäß übersetzt, gleicher Ton, nichts dazuerfinden –, auch wenn diktiert auf Deutsch. Sag dem Nutzer dann kurz auf Deutsch, dass du übersetzt hast. Ohne Sprache bleibt sie in der diktierten Sprache.
 Kanal: Standard ist WhatsApp; sagt der Nutzer "Mail"/"E-Mail", nimm channel "email" mit einem kurzen Betreff in der Sprache des Empfängers. Sagt der Nutzer etwas über einen Kontakt (Beziehung, Sprache, E-Mail), speichere es mit update_contact.
+Erinnerungen: Hat eine Aufgabe Datum und Uhrzeit, klingelt Claudia nur, solange die App offen ist. Unter deiner Bestätigung erscheint ein 📅-Knopf, der einen Kalendertermin mit Alarm anlegt (klingelt auch bei geschlossener App); erwähne ihn kurz, wenn der Nutzer ausdrücklich einen Alarm oder Wecker möchte.
 Du verschickst nie selbst; der Nutzer tippt im Entwurf auf "In WhatsApp öffnen" bzw. "Als E-Mail öffnen" und dort auf Senden. Halte Antworten nach einem Diktat besonders kurz, sie werden vorgelesen.
 Heute ist ${now.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} (${today()}), ${now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr.`;
 }

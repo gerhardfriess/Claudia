@@ -28,6 +28,7 @@ Claudia kann Aufgaben ansehen, anlegen, ändern, abhaken sowie Notizen speichern
 
 ## Erinnerungen
 Aufgaben mit Datum und Uhrzeit klingeln zur Zeit: Alarmton, Ansage („Erinnerung: …“) und ein Alarmfenster mit „Erledigt“ / „10 Min. später“. Funktioniert, solange Claudia geöffnet ist; war sie geschlossen, kommt der Alarm beim nächsten Öffnen (nur für die letzten 12 Stunden). Einstellbar unter ⚙︎ → Erinnerungen, dort auch „Alarm testen“.
+Zuverlässig auch bei geschlossener App: 📅 an der Aufgabe (oder im Chat unter „Aufgabe angelegt“, oder im Bearbeiten-Dialog „Speichern + Kalender“) erzeugt einen Kalendertermin (.ics) mit Alarm zur Uhrzeit; am iPhone „Hinzufügen“ tippen.
 
 ## Diktat & WhatsApp
 - 🎙 auf der Startseite oder im Chat: sprechen, nochmal tippen (oder Pause) → Text geht an Claudia.
