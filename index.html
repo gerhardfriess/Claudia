@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Claudia</title>
+  <meta name="description" content="Claudia – deine persönliche Assistentin">
+  <meta name="theme-color" content="#1E8B8C">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Claudia">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img src="icon.svg" alt="" width="28" height="28"><span>Claudia</span></div>
+    <button class="icon-btn" id="btn-settings" aria-label="Einstellungen" title="Einstellungen">⚙︎</button>
+  </header>
+
+  <main id="view"></main>
+
+  <nav class="tabbar" aria-label="Navigation">
+    <button data-tab="today" class="active"><span class="ti">☀︎</span><span>Heute</span></button>
+    <button data-tab="tasks"><span class="ti">✓</span><span>Aufgaben</span></button>
+    <button data-tab="notes"><span class="ti">✎</span><span>Notizen</span></button>
+    <button data-tab="chat"><span class="ti">✦</span><span>Claudia</span></button>
+  </nav>
+
+  <dialog id="dlg"></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
