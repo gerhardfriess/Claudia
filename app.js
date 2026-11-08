@@ -93,7 +93,7 @@ function viewToday() {
   const next = sortTasks(open.filter(t => t.due > today())).slice(0, 5);
   const doneToday = S.tasks.filter(t => t.done && t.doneAt && iso(t.doneAt) === today()).length;
   const date = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  return `<h1>${esc(greeting())}</h1><p class="sub">${date}</p>
+  return `<div class="greet"><img src="claudia.webp" alt="" class="portrait"><div><h1>${esc(greeting())}</h1><p class="sub">${date}</p></div></div>
   <button class="btn dictate" data-act="dictate">🎙 Diktieren</button>
   <div class="stats">
     <div class="card stat" data-act="goto" data-tab="tasks"><b>${tod.length}</b><span>heute fällig</span></div>
