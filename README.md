@@ -26,6 +26,9 @@ Online: https://gerhardfriess.github.io/Claudia/ (Repo gerhardfriess/Claudia). A
 Anthropic API-Key in den Einstellungen eintragen (console.anthropic.com → API Keys). Standardmodell: Claude Opus 5.5, Gründlichkeit „Schnell“.
 Claudia kann Aufgaben ansehen, anlegen, ändern, abhaken sowie Notizen speichern und durchsuchen.
 
+## Erinnerungen
+Aufgaben mit Datum und Uhrzeit klingeln zur Zeit: Alarmton, Ansage („Erinnerung: …“) und ein Alarmfenster mit „Erledigt“ / „10 Min. später“. Funktioniert, solange Claudia geöffnet ist; war sie geschlossen, kommt der Alarm beim nächsten Öffnen (nur für die letzten 12 Stunden). Einstellbar unter ⚙︎ → Erinnerungen, dort auch „Alarm testen“.
+
 ## Diktat & WhatsApp
 - 🎙 auf der Startseite oder im Chat: sprechen, nochmal tippen (oder Pause) → Text geht an Claudia.
 - Claudia korrigiert den diktierten Text und fragt, ob und an wen er gehen soll. Nennst du den Empfänger gleich im Diktat („Schreib Maria, dass …“), kommt sofort der Entwurf.

@@ -548,8 +548,11 @@ function settingsDialog() {
     <label class="cb"><input type="checkbox" name="autoSend" ${s.autoSend ? 'checked' : ''}> Diktat nach dem Sprechen automatisch an Claudia senden</label>
     <label class="cb"><input type="checkbox" name="speak" ${s.speak ? 'checked' : ''}> Claudias Antwort nach einem Diktat vorlesen</label>
     <h3 style="margin-top:6px">Erinnerungen</h3>
-    <div class="hint">Benachrichtigung zur eingetragenen Uhrzeit, solange Claudia geöffnet ist (auch im Hintergrund-Tab).</div>
-    <button class="btn ghost" value="notify" formnovalidate>${'Notification' in window && Notification.permission === 'granted' ? 'Benachrichtigungen sind aktiv ✓' : 'Benachrichtigungen erlauben'}</button>
+    <label class="cb"><input type="checkbox" name="alarmSound" ${s.alarmSound !== false ? 'checked' : ''}> Alarmton zur Erinnerungszeit</label>
+    <label class="cb"><input type="checkbox" name="alarmSpeak" ${s.alarmSpeak !== false ? 'checked' : ''}> Erinnerung ansagen</label>
+    <div class="hint">Klingelt zur eingetragenen Uhrzeit, solange Claudia geöffnet ist. Ist Claudia beim Fälligwerden geschlossen, kommt der Alarm beim nächsten Öffnen.</div>
+    <div class="row"><button class="btn ghost" value="alarm-test" formnovalidate>Alarm testen</button>
+    <button class="btn ghost" value="notify" formnovalidate>${'Notification' in window && Notification.permission === 'granted' ? 'Benachrichtigungen aktiv ✓' : 'Benachrichtigungen erlauben'}</button></div>
     <h3 style="margin-top:6px">Sync PC ↔ Handy</h3>
     ${syncCfg().token ? `
       <div class="hint">Aufgaben, Notizen und Kontakte werden automatisch abgeglichen, verschlüsselt mit deinem Sync-Passwort. Chat, API-Key und Einstellungen bleiben auf dem Gerät.</div>
@@ -580,9 +583,15 @@ function settingsDialog() {
         syncNow(true).then(ok => { if (!ok) setSyncCfg({}); if (dlg.open) settingsDialog(); });
         if (v === 'sync-setup') return false;
       }
+      if (v === 'alarm-test') {
+        const prev = { a: s.alarmSound, b: s.alarmSpeak };
+        s.alarmSound = !!fd.get('alarmSound'); s.alarmSpeak = !!fd.get('alarmSpeak');
+        (async () => { if (s.alarmSound) await playAlarm(); if (s.alarmSpeak) speak('Erinnerung: Das ist ein Test.'); s.alarmSound = prev.a; s.alarmSpeak = prev.b; })();
+        return false;
+      }
       if (v === 'notify') { Notification?.requestPermission().then(p => toast(p === 'granted' ? 'Benachrichtigungen aktiv' : 'Nicht erlaubt')); return false; }
       if (v !== 'ok') return;
-      Object.assign(s, { name: fd.get('name').trim(), model: fd.get('model'), effort: fd.get('effort'), autoSend: fd.has('autoSend'), speak: fd.has('speak') });
+      Object.assign(s, { name: fd.get('name').trim(), model: fd.get('model'), effort: fd.get('effort'), autoSend: fd.has('autoSend'), speak: fd.has('speak'), alarmSound: fd.has('alarmSound'), alarmSpeak: fd.has('alarmSpeak') });
       setKey(fd.get('key').trim()); save(); toast('Gespeichert');
     });
 }
@@ -656,7 +665,7 @@ function contactsDialog() {
   }));
   count(); filter();
 }
-const APP_VERSION = '2026-11-08 · 11';
+const APP_VERSION = '2026-11-08 · 12';
 const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
 function contactEditDialog(c) {
   if (!c) return contactsDialog();
@@ -915,16 +924,82 @@ async function sendChat(text, prefillOnly = false, dictated = false) {
 }
 
 // ---------- Erinnerungen ----------
-function checkReminders() {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const now = new Date(), d = today(), hm = now.toTimeString().slice(0, 5);
-  for (const t of S.tasks) {
-    if (t.done || !t.time || !t.due || S.notified.includes(t.id)) continue;
-    if (t.due < d || (t.due === d && t.time <= hm)) {
-      try { new Notification('Claudia erinnert dich', { body: t.title, icon: 'icon.svg', tag: t.id }); } catch {}
-      S.notified.push(t.id); save();
+// Browser spielen Ton erst ab, nachdem einmal auf die Seite getippt wurde – dabei wird der Ton „freigeschaltet“.
+let audioCtx = null;
+function unlockAudio() {
+  try {
+    audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch {}
+}
+['pointerdown', 'keydown', 'touchend'].forEach(ev => document.addEventListener(ev, unlockAudio, { passive: true }));
+
+// Alarmton: 3 × drei kurze Pieptöne (ca. 3 s)
+function playAlarm() {
+  return new Promise(resolve => {
+    unlockAudio();
+    if (!audioCtx) return resolve();
+    const t0 = audioCtx.currentTime + 0.05;
+    for (let r = 0; r < 3; r++) for (let i = 0; i < 3; i++) {
+      const at = t0 + r * 1.0 + i * 0.2;
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'square'; o.frequency.value = i === 2 ? 1175 : 880;
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.25, at + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.15);
+      o.connect(g).connect(audioCtx.destination); o.start(at); o.stop(at + 0.16);
     }
+    try { navigator.vibrate?.([300, 150, 300, 150, 300]); } catch {}
+    setTimeout(resolve, 3100);
+  });
+}
+
+function showAlarm(list) {
+  let el = $('#alarm');
+  if (!el) { el = document.createElement('div'); el.id = 'alarm'; document.body.appendChild(el); }
+  el.innerHTML = `<div class="alarm-box" role="alertdialog" aria-label="Erinnerung">
+    <div class="alarm-head">⏰ Erinnerung</div>
+    ${list.map(t => `<div class="alarm-item"><b>${esc(t.title)}</b><span class="hint">${t.due === today() ? 'heute' : fmtDate(t.due)} ${esc(t.time)}</span>
+      <div class="row"><button class="btn" data-a="done" data-id="${t.id}">Erledigt</button>
+      <button class="btn ghost" data-a="snooze" data-id="${t.id}">10 Min. später</button></div></div>`).join('')}
+    <button class="btn ghost" data-a="close" style="width:100%">OK</button></div>`;
+  el.hidden = false;
+  el.querySelectorAll('button[data-a]').forEach(b => b.onclick = () => {
+    speechSynthesis?.cancel();
+    const t = S.tasks.find(x => x.id === b.dataset.id);
+    if (b.dataset.a === 'done' && t) { toggleTask(t.id, true); toast('Erledigt ✓'); }
+    if (b.dataset.a === 'snooze' && t) {
+      const n = new Date(Date.now() + 10 * 60_000);
+      t.due = iso(n); t.time = n.toTimeString().slice(0, 5);
+      S.notified = S.notified.filter(x => x !== t.id); save(); toast('Erinnere dich um ' + t.time);
+    }
+    b.closest('.alarm-item')?.remove();
+    if (b.dataset.a === 'close' || !el.querySelector('.alarm-item')) el.hidden = true;
+    render();
+  });
+}
+
+let alarmRunning = false;
+async function fireAlarm(list) {
+  if (document.visibilityState !== 'visible' && 'Notification' in window && Notification.permission === 'granted') {
+    for (const t of list) try { new Notification('⏰ Claudia erinnert dich', { body: t.title, icon: 'icon.svg', tag: t.id, requireInteraction: true }); } catch {}
   }
+  showAlarm(list);
+  if (alarmRunning) return; alarmRunning = true;
+  try {
+    if (S.settings.alarmSound !== false) await playAlarm();
+    if (S.settings.alarmSpeak !== false) speak('Erinnerung: ' + list.map(t => t.title).join('. Und: '));
+  } finally { alarmRunning = false; }
+}
+
+function checkReminders() {
+  const now = new Date(), d = today(), hm = now.toTimeString().slice(0, 5);
+  const due = S.tasks.filter(t => !t.done && t.time && t.due && !S.notified.includes(t.id) && (t.due < d || (t.due === d && t.time <= hm)));
+  if (!due.length) return;
+  S.notified.push(...due.map(t => t.id)); save();
+  // Nur Erinnerungen der letzten 12 Stunden klingeln; ältere werden still als erledigt-gemeldet markiert
+  const recent = due.filter(t => now - new Date(t.due + 'T' + t.time) < 12 * 3600_000);
+  if (recent.length) fireAlarm(recent);
 }
 
 // ---------- Start ----------
@@ -934,7 +1009,8 @@ $('#btn-contacts').addEventListener('click', contactsDialog);
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 window.addEventListener('storage', () => { S = load(); render(); });
 render();
-checkReminders(); setInterval(checkReminders, 60_000);
+checkReminders(); setInterval(checkReminders, 15_000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkReminders(); });
 // Sync: beim Start, beim Zurückkehren in die App, wieder online und alle 90 s im Vordergrund
 syncNow();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
