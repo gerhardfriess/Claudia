@@ -370,7 +370,7 @@ function noteDialog(n) {
 }
 function settingsDialog() {
   const s = S.settings;
-  openDialog(`<h3>Einstellungen</h3>
+  openDialog(`<h3>Einstellungen <span class="hint" style="font-weight:400">Version ${APP_VERSION}</span></h3>
     <label>Wie soll Claudia dich nennen?<input type="text" name="name" value="${esc(s.name)}"></label>
     <label>Anthropic API-Key<input type="password" name="key" value="${esc(getKey())}" placeholder="sk-ant-…" autocomplete="off"></label>
     <div class="hint">Wird nur auf diesem Gerät gespeichert und direkt an api.anthropic.com gesendet. Key erstellen: console.anthropic.com → API Keys.</div>
@@ -465,6 +465,7 @@ function contactsDialog() {
   }));
   count(); filter();
 }
+const APP_VERSION = '2026-11-08 · 7';
 const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
 function contactEditDialog(c) {
   if (!c) return contactsDialog();

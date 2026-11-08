@@ -1,5 +1,5 @@
 // Claudia – Service Worker: App-Dateien offline verfügbar machen
-const CACHE = 'claudia-v6';
+const CACHE = 'claudia-v7';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'claudia.webp'];
 
 self.addEventListener('install', e => {
