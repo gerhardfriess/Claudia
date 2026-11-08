@@ -182,6 +182,11 @@ function findContact(name) {
   const n = norm(name); if (!n) return null;
   const list = allowed();
   const exact = list.find(c => norm(c.name) === n); if (exact) return exact;
+  // Alias (z. B. "meine Frau", "Frau"), mehrere durch Komma getrennt
+  const aliasOf = c => String(c.alias || '').split(',').map(a => norm(a).replace(/^(meine?|mein)\s+/, '')).filter(Boolean);
+  const nn = n.replace(/^(meine?|mein|an)\s+/, '');
+  const byAlias = list.filter(c => aliasOf(c).includes(nn)); if (byAlias.length === 1) return byAlias[0];
+  if (/^(mich|mir|ich|selbst)$/.test(nn)) { const me = list.find(c => c.self); if (me) return me; }
   const part = list.filter(c => norm(c.name).includes(n) || n.includes(norm(c.name)));
   return part.length === 1 ? part[0] : null;
 }
@@ -198,16 +203,31 @@ function findBlock(id) {
 }
 function draftCard(b) {
   const inp = b.input || {}, c = findContact(inp.recipient), sent = S.draftSent[b.id];
-  const who = c ? `<b>${esc(c.name)}</b> · ${esc(c.phone)}` : `<b>${esc(inp.recipient || 'Empfänger offen')}</b> · Nummer unbekannt, Kontakt wählst du in WhatsApp`;
+  const who = c ? `<b>${esc(c.name)}</b>${c.alias ? ` (${esc(c.alias)})` : ''}${c.lang ? ` · ${esc(c.lang)}` : ''}`
+    : `<b>${esc(inp.recipient || 'Empfänger offen')}</b> · Kontakt unbekannt, du wählst ihn in WhatsApp oder E-Mail`;
+  const mail = inp.channel === 'email' || !!c?.email;
+  const waBtn = `<button class="btn wa ${inp.channel === 'email' ? 'ghost' : ''}" data-act="wa" data-id="${b.id}">${sent === 'wa' ? '✓ Erneut in WhatsApp' : 'In WhatsApp öffnen'}</button>`;
+  const mailBtn = mail ? `<button class="btn ${inp.channel === 'email' ? '' : 'ghost'}" data-act="mail" data-id="${b.id}">${sent === 'mail' ? '✓ Erneut als E-Mail' : 'Als E-Mail öffnen'}</button>` : '';
   return `<div class="card draft">
     <div class="meta">✉︎ Nachricht an ${who}</div>
+    ${mail ? `<input type="text" data-subject="${b.id}" placeholder="Betreff (für E-Mail)" value="${esc(S.draftEdits[b.id + ':s'] ?? inp.subject ?? '')}">` : ''}
     <textarea data-draft="${b.id}" rows="4">${esc(S.draftEdits[b.id] ?? inp.text ?? '')}</textarea>
     <div class="actions">
-      <button class="btn wa" data-act="wa" data-id="${b.id}">${sent ? '✓ Erneut in WhatsApp öffnen' : 'In WhatsApp öffnen'}</button>
+      ${inp.channel === 'email' ? mailBtn + waBtn : waBtn + mailBtn}
       ${navigator.share ? `<button class="btn ghost" data-act="share" data-id="${b.id}">Teilen …</button>` : ''}
       <button class="btn ghost" data-act="copy" data-id="${b.id}">Kopieren</button>
     </div>
-    ${sent ? '<div class="hint">An WhatsApp übergeben. Dort auf Senden tippen.</div>' : ''}</div>`;
+    ${sent ? `<div class="hint">An ${sent === 'mail' ? 'dein E-Mail-Programm' : 'WhatsApp'} übergeben. Dort auf Senden tippen.</div>` : ''}</div>`;
+}
+function openMail(id) {
+  const b = findBlock(id); if (!b) return;
+  const text = draftText(id); if (!text) return toast('Nachricht ist leer');
+  const c = findContact(b.input?.recipient);
+  const subject = (document.querySelector(`input[data-subject="${id}"]`)?.value ?? b.input?.subject ?? '').trim();
+  const url = `mailto:${encodeURIComponent(c?.email || '').replace('%40', '@')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+  S.draftSent[id] = 'mail'; save();
+  location.href = url;
+  render();
 }
 function draftText(id) {
   const ta = document.querySelector(`textarea[data-draft="${id}"]`);
@@ -220,7 +240,7 @@ function openWhatsApp(id) {
   const num = c ? waNumber(c.phone) : null;
   if (c && !num) toast('Nummer bitte international speichern (z. B. +49 …)');
   const url = `https://wa.me/${num || ''}?text=${encodeURIComponent(text)}`;
-  S.draftSent[id] = true; save();
+  S.draftSent[id] = 'wa'; save();
   window.open(url, '_blank', 'noopener');
   render();
 }
@@ -274,6 +294,7 @@ function scrollChat() { requestAnimationFrame(() => { const m = $('#view'); m.sc
 // ---------- Events ----------
 function bind(root) {
   root.querySelectorAll('textarea[data-draft]').forEach(ta => ta.addEventListener('input', () => { S.draftEdits[ta.dataset.draft] = ta.value; save(); }));
+  root.querySelectorAll('input[data-subject]').forEach(i => i.addEventListener('input', () => { S.draftEdits[i.dataset.subject + ':s'] = i.value; save(); }));
   root.querySelectorAll('[data-act]').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); act(el.dataset.act, el.dataset); }));
   root.querySelectorAll('form[data-form]').forEach(f => f.addEventListener('submit', e => { e.preventDefault(); submit(f.dataset.form, f); }));
   const nq = $('#note-q');
@@ -295,6 +316,7 @@ function act(a, d) {
     case 'new-chat': S.chat = []; S.draftEdits = {}; S.draftSent = {}; save(); return render();
     case 'dictate': return startDictation();
     case 'wa': return openWhatsApp(d.id);
+    case 'mail': return openMail(d.id);
     case 'copy': navigator.clipboard?.writeText(draftText(d.id)).then(() => toast('Kopiert'), () => toast('Kopieren nicht möglich')); return;
     case 'share': navigator.share?.({ text: draftText(d.id) }).catch(() => {}); return;
     case 'contacts': return contactsDialog();
@@ -378,33 +400,42 @@ let contactQuery = '';
 function contactsDialog() {
   const canPick = 'contacts' in navigator && 'select' in (navigator.contacts || {});
   const rows = [...S.contacts].sort((a, b) => a.name.localeCompare(b.name, 'de')).map(c =>
-    `<div class="crow ${c.on === false ? 'off' : ''}" data-q="${esc(norm(c.name + ' ' + c.phone))}">
+    `<div class="crow ${c.on === false ? 'off' : ''}" data-q="${esc(norm([c.name, c.phone, c.email, c.alias].join(' ')))}">
        <label class="cb"><input type="checkbox" data-cid="${c.id}" ${c.on === false ? '' : 'checked'}>
-       <span><b>${esc(c.name)}</b><span class="hint"> ${esc(c.phone)}${waNumber(c.phone) ? '' : ' ⚠︎ ohne +Ländervorwahl'}</span></span></label>
-       <button class="mini" value="del:${c.id}" formnovalidate aria-label="Löschen">✕</button></div>`).join('');
+       <span><b>${esc(c.name)}</b>${c.self ? ' <span class="pill">ich</span>' : ''}${c.alias ? ` <span class="pill priv">${esc(c.alias)}</span>` : ''}${c.lang ? ` <span class="pill today">${esc(c.lang)}</span>` : ''}
+       <span class="hint" style="display:block">${esc(c.phone || '')}${c.phone && !waNumber(c.phone) ? ' ⚠︎ ohne +Ländervorwahl' : ''}${c.email ? (c.phone ? ' · ' : '') + esc(c.email) : ''}</span></span></label>
+       <button class="mini edit" value="edit:${c.id}" formnovalidate aria-label="Bearbeiten" title="Bearbeiten">✎</button>
+       <button class="mini" value="del:${c.id}" formnovalidate aria-label="Löschen" title="Löschen">✕</button></div>`).join('');
   openDialog(`<h3>Kontakte für Claudia</h3>
     <div class="hint">Nur <b>angehakte</b> Kontakte kann Claudia sehen und als Empfänger nutzen. Alle anderen bleiben unsichtbar für sie und werden nie an die KI gesendet.</div>
     <div class="ccount hint" id="ccount"></div>
     ${S.contacts.length ? `<input type="search" id="cq" placeholder="Kontakt suchen …" value="${esc(contactQuery)}">
     <div class="chips"><button type="button" class="chip" data-call="1">Alle sichtbaren anhaken</button><button type="button" class="chip" data-call="0">Alle sichtbaren abwählen</button></div>` : ''}
     <div class="clist">${rows || '<div class="hint">Noch keine Kontakte. Importiere dein Adressbuch als vCard-Datei (.vcf) oder trag einzelne Kontakte ein.</div>'}</div>
-    <div class="row"><input type="text" name="cname" placeholder="Name (z. B. Maria)"><input type="text" name="cphone" placeholder="+49 …" inputmode="tel"></div>
+    <div class="row"><input type="text" name="cname" placeholder="Name (z. B. Maria)"><input type="text" name="cphone" placeholder="+49 … (optional)" inputmode="tel"></div>
+    <div class="hint">Mit ✎ trägst du E-Mail, Sprache, Alias (z. B. „meine Frau“) und „Das bin ich“ ein.</div>
     <div class="actions">
     <button class="btn ghost" value="vcf" formnovalidate>Adressbuch importieren (.vcf)</button>
     ${canPick ? '<button class="btn ghost" value="pick" formnovalidate>Aus Handy-Kontakten</button>' : ''}
     <button class="btn ghost" value="add" formnovalidate>Hinzufügen</button><button class="btn" value="cancel" formnovalidate>Fertig</button></div>
     <div class="hint">vCard exportieren: Android-Kontakte → Einstellungen → Exportieren · iPhone: Kontakte am PC über icloud.com → Exportieren · Outlook/Google Kontakte → Exportieren (vCard). Importierte Kontakte sind zunächst <b>nicht</b> freigegeben; hake an, wen Claudia kennen darf.</div>`,
     (v, fd) => {
-      if (v?.startsWith('del:')) { S.contacts = S.contacts.filter(c => c.id !== v.slice(4)); save(); setTimeout(contactsDialog); return; }
+      if (v?.startsWith('del:')) {
+        const c = S.contacts.find(x => x.id === v.slice(4));
+        if (c && !confirm(`${c.name} löschen?`)) return false;
+        S.contacts = S.contacts.filter(x => x.id !== v.slice(4)); save(); setTimeout(contactsDialog); return;
+      }
+      if (v?.startsWith('edit:')) { const c = S.contacts.find(x => x.id === v.slice(5)); setTimeout(() => contactEditDialog(c)); return; }
       if (v === 'add') {
         const name = fd.get('cname').trim(), phone = fd.get('cphone').trim();
-        if (!name || !phone) { toast('Name und Nummer eintragen'); return false; }
-        saveContact(name, phone, true); setTimeout(contactsDialog); return;
+        if (!name) { toast('Name eintragen'); return false; }
+        const c = saveContact(name, phone, true); setTimeout(() => contactEditDialog(c)); return;
       }
       if (v === 'vcf') { importVcf(); return false; }
       if (v === 'pick') {
-        navigator.contacts.select(['name', 'tel'], { multiple: true }).then(list => {
-          let n = 0; for (const p of list) if (p.name?.[0] && p.tel?.[0]) { saveContact(p.name[0], p.tel[0], true); n++; }
+        navigator.contacts.getProperties().then(props => navigator.contacts.select(['name', 'tel', ...(props.includes('email') ? ['email'] : [])], { multiple: true })).then(list => {
+          let n = 0; for (const p of list) if (p.name?.[0] && (p.tel?.[0] || p.email?.[0])) { const c = saveContact(p.name[0], p.tel?.[0] || '', true); if (p.email?.[0] && !c.email) c.email = p.email[0]; n++; }
+          save();
           toast(`${n} Kontakt(e) übernommen und freigegeben`); contactsDialog();
         }).catch(() => {});
         return;
@@ -432,9 +463,35 @@ function contactsDialog() {
   }));
   count(); filter();
 }
+const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
+function contactEditDialog(c) {
+  if (!c) return contactsDialog();
+  const langs = c.lang && !LANGS.includes(c.lang) ? [...LANGS, c.lang] : LANGS;
+  openDialog(`<h3>Kontakt bearbeiten</h3>
+    <label>Name<input type="text" name="name" value="${esc(c.name)}" required></label>
+    <label>Alias / Beziehung<input type="text" name="alias" value="${esc(c.alias || '')}" placeholder="z. B. meine Frau, Schatz"></label>
+    <div class="hint">Mehrere Aliase mit Komma trennen. Dann versteht Claudia z. B. „Schreib meiner Frau …“.</div>
+    <div class="row"><label>Telefon (WhatsApp)<input type="text" name="phone" value="${esc(c.phone || '')}" placeholder="+49 …" inputmode="tel"></label>
+    <label>E-Mail<input type="email" name="email" value="${esc(c.email || '')}" placeholder="name@beispiel.de" inputmode="email"></label></div>
+    <label>Sprache für Nachrichten<select name="lang"><option value="">Wie diktiert (Standard)</option>${langs.map(l => `<option ${l === c.lang ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <div class="hint">Claudia schreibt Nachrichten an diese Person immer in dieser Sprache, auch wenn du auf Deutsch diktierst.</div>
+    <label class="cb"><input type="checkbox" name="on" ${c.on === false ? '' : 'checked'}> Für Claudia freigegeben</label>
+    <label class="cb"><input type="checkbox" name="self" ${c.self ? 'checked' : ''}> Das bin ich</label>
+    <div class="actions"><button class="btn ghost" value="cancel" formnovalidate>Abbrechen</button><button class="btn" value="ok">Speichern</button></div>`,
+    (v, fd) => {
+      if (v === 'ok') {
+        const phone = fd.get('phone').trim(), email = fd.get('email').trim();
+        if (phone && !waNumber(phone)) toast('Hinweis: Nummer ohne +Ländervorwahl funktioniert nicht mit WhatsApp');
+        Object.assign(c, { name: fd.get('name').trim() || c.name, alias: fd.get('alias').trim(), phone, email, lang: fd.get('lang'), on: fd.has('on'), self: fd.has('self') });
+        if (c.self) for (const x of S.contacts) if (x !== c) x.self = false;
+        save();
+      }
+      setTimeout(contactsDialog);
+    });
+}
 function saveContact(name, phone, on) {
   const c = S.contacts.find(x => norm(x.name) === norm(name));
-  if (c) { c.phone = phone; if (on !== undefined) c.on = on; }
+  if (c) { if (phone) c.phone = phone; if (on !== undefined) c.on = on; }
   else S.contacts.push({ id: uid(), name: name.trim(), phone: phone.trim(), on: on !== false });
   save(); return c || S.contacts[S.contacts.length - 1];
 }
@@ -446,7 +503,8 @@ function parseVcf(txt) {
   for (const line of lines) {
     const i = line.indexOf(':'); if (i < 0) continue;
     const head = line.slice(0, i), val = line.slice(i + 1), key = head.split(';')[0].replace(/^item\d+\./i, '').toUpperCase();
-    if (key === 'BEGIN') cur = { fn: '', n: '', tels: [] };
+    if (key === 'BEGIN') cur = { fn: '', n: '', tels: [], email: '' };
+    else if (key === 'EMAIL' && cur && !cur.email) cur.email = val.replace(/^mailto:/i, '').trim();
     else if (!cur) continue;
     else if (key === 'FN') cur.fn = dec(val);
     else if (key === 'N') { const p = val.split(';').map(dec); cur.n = [p[1], p[0]].filter(Boolean).join(' '); }
@@ -454,7 +512,8 @@ function parseVcf(txt) {
     else if (key === 'END') {
       const name = cur.fn || cur.n, tel = cur.tels.find(t => t.mobile) || cur.tels[0];
       // Deutsche Inlandsnummer (0171 …) → +49 171 …
-      if (name && tel) out.push({ name, phone: /^0[1-9]/.test(tel.num) ? '+49 ' + tel.num.slice(1) : tel.num });
+      const phone = !tel ? '' : /^0[1-9]/.test(tel.num) ? '+49 ' + tel.num.slice(1) : tel.num;
+      if (name && (phone || cur.email)) out.push({ name, phone, email: cur.email });
       cur = null;
     }
   }
@@ -467,9 +526,14 @@ function importVcf() {
       const list = parseVcf(await inp.files[0].text());
       if (!list.length) throw 0;
       let neu = 0;
-      for (const p of list) { const had = S.contacts.some(x => norm(x.name) === norm(p.name)); saveContact(p.name, p.phone); if (!had) { S.contacts[S.contacts.length - 1].on = false; neu++; } }
+      for (const p of list) {
+        const had = S.contacts.some(x => norm(x.name) === norm(p.name));
+        const c = saveContact(p.name, p.phone, had ? undefined : false);
+        if (p.email && !c.email) c.email = p.email;
+        if (!had) neu++;
+      }
       save(); toast(`${list.length} Kontakte gelesen, ${neu} neu (noch nicht freigegeben)`); contactsDialog();
-    } catch { toast('Keine Kontakte mit Telefonnummer in der Datei gefunden'); }
+    } catch { toast('Keine Kontakte mit Telefonnummer oder E-Mail in der Datei gefunden'); }
   };
   inp.click();
 }
@@ -488,7 +552,7 @@ function importData() {
       const merge = (mine, theirs, stamp) => { const m = new Map(mine.map(x => [x.id, x])); for (const x of theirs) { const o = m.get(x.id); if (!o || stamp(x) >= stamp(o)) m.set(x.id, x); } return [...m.values()]; };
       S.tasks = merge(S.tasks, d.tasks, x => x.doneAt || x.created || 0);
       S.notes = merge(S.notes, d.notes, x => x.updated || 0).sort((a, b) => b.updated - a.updated);
-      if (Array.isArray(d.contacts)) for (const c of d.contacts) if (c?.name && c?.phone) saveContact(c.name, c.phone, c.on !== false);
+      if (Array.isArray(d.contacts)) for (const c of d.contacts) if (c?.name) { const x = saveContact(c.name, c.phone || '', c.on !== false); for (const k of ['email', 'lang', 'alias', 'self']) if (c[k] !== undefined) x[k] = c[k]; }
       save(); dlg.close(); render(); toast(`Importiert: ${d.tasks.length} Aufgaben, ${d.notes.length} Notizen`);
     } catch { toast('Keine gültige Claudia-Datei'); }
   };
@@ -496,7 +560,7 @@ function importData() {
 }
 
 // ---------- Claudia (Claude API) ----------
-const TOOL_LABEL = { list_contacts: 'Kontakte angesehen', save_contact: 'Kontakt gespeichert', list_tasks: 'Aufgaben angesehen', add_task: 'Aufgabe angelegt', update_task: 'Aufgabe geändert', complete_task: 'Aufgabe abgehakt', add_note: 'Notiz gespeichert', search_notes: 'Notizen durchsucht' };
+const TOOL_LABEL = { list_contacts: 'Kontakte angesehen', update_contact: 'Kontakt aktualisiert', save_contact: 'Kontakt gespeichert', list_tasks: 'Aufgaben angesehen', add_task: 'Aufgabe angelegt', update_task: 'Aufgabe geändert', complete_task: 'Aufgabe abgehakt', add_note: 'Notiz gespeichert', search_notes: 'Notizen durchsucht' };
 const TOOLS = [
   { name: 'list_tasks', description: 'Listet Aufgaben des Nutzers. Nutze das, bevor du über Aufgaben sprichst oder welche änderst.',
     input_schema: { type: 'object', properties: { status: { type: 'string', enum: ['offen', 'erledigt', 'alle'] } }, required: ['status'], additionalProperties: false } },
@@ -510,12 +574,14 @@ const TOOLS = [
     input_schema: { type: 'object', properties: { title: { type: 'string' }, text: { type: 'string' } }, required: ['title', 'text'], additionalProperties: false } },
   { name: 'search_notes', description: 'Durchsucht die Notizen (leerer Suchbegriff = alle, neueste zuerst).',
     input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'], additionalProperties: false } },
-  { name: 'list_contacts', description: 'Listet die Kontakte, die der Nutzer für dich freigegeben hat (Name, ob eine Nummer vorhanden ist). Andere Kontakte siehst du bewusst nicht.',
+  { name: 'list_contacts', description: 'Listet die Kontakte, die der Nutzer für dich freigegeben hat: Name, Alias/Beziehung (z. B. "meine Frau"), Sprache für Nachrichten, ob WhatsApp-Nummer bzw. E-Mail vorhanden sind, und ob es der Nutzer selbst ist (ich=true). Andere Kontakte siehst du bewusst nicht.',
     input_schema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'update_contact', description: 'Ändert Alias/Beziehung, Sprache oder E-Mail eines freigegebenen Kontakts, wenn der Nutzer das sagt (z. B. "Urtza ist meine Frau", "schreib ihr immer auf Englisch"). Nicht zu ändernde Felder weglassen.',
+    input_schema: { type: 'object', properties: { name: { type: 'string', description: 'Name wie in list_contacts' }, alias: { type: 'string' }, lang: { type: 'string', description: 'Sprache auf Deutsch, z. B. Englisch, Spanisch; leer = wie diktiert' }, email: { type: 'string' } }, required: ['name'], additionalProperties: false } },
   { name: 'save_contact', description: 'Speichert oder aktualisiert einen Kontakt mit Telefonnummer (international, z. B. +49…). Nur wenn der Nutzer eine Nummer nennt.',
     input_schema: { type: 'object', properties: { name: { type: 'string' }, phone: { type: 'string' } }, required: ['name', 'phone'], additionalProperties: false } },
-  { name: 'prepare_message', description: 'Zeigt dem Nutzer einen fertigen Nachrichtenentwurf mit Button "In WhatsApp öffnen". Der Nutzer prüft und sendet selbst; du kannst nicht selbst senden. Nur aufrufen, wenn der Nutzer die Nachricht verschicken will und der Empfänger feststeht.',
-    input_schema: { type: 'object', properties: { recipient: { type: 'string', description: 'Name des Empfängers wie in den Kontakten' }, text: { type: 'string', description: 'Endgültiger, korrigierter Nachrichtentext' } }, required: ['recipient', 'text'], additionalProperties: false } },
+  { name: 'prepare_message', description: 'Zeigt dem Nutzer einen fertigen Nachrichtenentwurf mit Buttons "In WhatsApp öffnen" und (wenn eine E-Mail hinterlegt ist) "Als E-Mail öffnen". Der Nutzer prüft und sendet selbst; du kannst nicht selbst senden. Nur aufrufen, wenn der Nutzer die Nachricht verschicken will und der Empfänger feststeht.',
+    input_schema: { type: 'object', properties: { recipient: { type: 'string', description: 'Name des Empfängers genau wie in list_contacts' }, text: { type: 'string', description: 'Endgültiger, korrigierter Nachrichtentext, in der Sprache des Empfängers' }, channel: { type: 'string', enum: ['whatsapp', 'email'], description: 'email nur, wenn der Nutzer eine E-Mail/Mail will' }, subject: { type: 'string', description: 'Betreff, nur bei E-Mail' } }, required: ['recipient', 'text', 'channel'], additionalProperties: false } },
 ].map(t => ({ ...t, eager_input_streaming: true }));
 
 const reDate = /^(\d{4}-\d{2}-\d{2})?$/, reTime = /^(\d{2}:\d{2})?$/;
@@ -549,7 +615,13 @@ function runTool(name, inp) {
       return S.notes.filter(n => !q || (n.title + ' ' + n.text).toLowerCase().includes(q)).slice(0, 20)
         .map(n => ({ id: n.id, title: n.title, text: n.text.slice(0, 1500), updated: new Date(n.updated).toISOString().slice(0, 10) }));
     }
-    case 'list_contacts': return allowed().map(c => ({ name: c.name, hat_nummer: !!waNumber(c.phone) }));
+    case 'list_contacts': return allowed().map(c => ({ name: c.name, alias: c.alias || '', sprache: c.lang || 'wie diktiert', whatsapp: !!waNumber(c.phone), email: !!c.email, ...(c.self ? { ich: true } : {}) }));
+    case 'update_contact': {
+      need('name'); const c = findContact(inp.name); if (!c) throw new Error('Kontakt nicht gefunden oder nicht freigegeben');
+      if (inp.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(inp.email)) throw new Error('E-Mail-Adresse ungültig');
+      for (const k of ['alias', 'lang', 'email']) if (typeof inp[k] === 'string') c[k] = inp[k].trim();
+      save(); return { name: c.name, alias: c.alias || '', sprache: c.lang || 'wie diktiert', email: !!c.email };
+    }
     case 'save_contact': {
       need('name'); need('phone');
       if (!waNumber(inp.phone)) throw new Error('Nummer braucht die Ländervorwahl mit + (z. B. +49…). Frag den Nutzer nach dem Land.');
@@ -557,8 +629,10 @@ function runTool(name, inp) {
     }
     case 'prepare_message': {
       need('recipient'); need('text'); if (!inp.text.trim()) throw new Error('Text leer');
+      if (inp.channel !== undefined && !['whatsapp', 'email'].includes(inp.channel)) throw new Error('channel ungültig');
       const c = findContact(inp.recipient);
-      return { angezeigt: true, kontakt_gefunden: !!c, hinweis: c ? 'Der Nutzer tippt jetzt selbst auf Senden.' : 'Kontakt unbekannt: Der Nutzer wählt ihn in WhatsApp aus. Biete an, die Nummer zu speichern.' };
+      if (c && inp.channel === 'email' && !c.email) return { angezeigt: true, kontakt_gefunden: true, hinweis: 'Für diesen Kontakt ist keine E-Mail hinterlegt; der Nutzer trägt die Adresse im Mailprogramm ein. Biete an, sie zu speichern.' };
+      return { angezeigt: true, kontakt_gefunden: !!c, hinweis: c ? 'Der Nutzer tippt jetzt selbst auf Senden.' : 'Kontakt unbekannt oder nicht freigegeben: Der Nutzer wählt ihn selbst aus.' };
     }
   }
   throw new Error('Unbekanntes Werkzeug');
@@ -572,7 +646,10 @@ Diktat: Nachrichten, die mit "[Diktiert]" beginnen, hat der Nutzer gesprochen; d
 • Auftrag oder Frage an dich (z. B. "Erinnere mich …", "Was steht an?"): einfach erledigen.
 • Ein Nachrichtentext für andere Menschen: Korrigiere Rechtschreibung, Grammatik, Zeichensetzung und offensichtliche Erkennungsfehler. Inhalt, Ton, Du/Sie und Länge bleiben, wie sie sind; nichts dazuerfinden. Zeig die korrigierte Fassung in Anführungszeichen und frag: "Soll ich sie verschicken, und wenn ja, an wen?" Ist der Text nur für ihn selbst, biete an, ihn als Notiz zu speichern.
 • Nennt er den Empfänger schon im Diktat ("Schreib Maria, dass ich später komme"), formuliere die Nachricht direkt an diese Person (in seinem Namen, Ich-Form) und ruf gleich prepare_message auf.
-Sobald der Empfänger feststeht: list_contacts prüfen, dann prepare_message mit dem passenden Namen. Ist der Name unklar (mehrere Treffer), kurz nachfragen. Du verschickst nie selbst; der Nutzer tippt im Entwurf auf "In WhatsApp öffnen" und dort auf Senden. Halte Antworten nach einem Diktat besonders kurz, sie werden vorgelesen.
+Sobald der Empfänger feststeht: list_contacts prüfen, dann prepare_message mit dem genauen Namen aus der Liste. Empfänger können auch über ihren Alias genannt werden ("meine Frau", "meine Tochter"); der Kontakt mit ich=true ist der Nutzer selbst ("schick mir", "an mich"). Ist der Name unklar (mehrere Treffer), kurz nachfragen.
+Sprache: Hat der Empfänger eine Sprache hinterlegt, schreibst du die Nachricht in dieser Sprache – sinngemäß übersetzt, gleicher Ton, nichts dazuerfinden –, auch wenn diktiert auf Deutsch. Sag dem Nutzer dann kurz auf Deutsch, dass du übersetzt hast. Ohne Sprache bleibt sie in der diktierten Sprache.
+Kanal: Standard ist WhatsApp; sagt der Nutzer "Mail"/"E-Mail", nimm channel "email" mit einem kurzen Betreff in der Sprache des Empfängers. Sagt der Nutzer etwas über einen Kontakt (Beziehung, Sprache, E-Mail), speichere es mit update_contact.
+Du verschickst nie selbst; der Nutzer tippt im Entwurf auf "In WhatsApp öffnen" bzw. "Als E-Mail öffnen" und dort auf Senden. Halte Antworten nach einem Diktat besonders kurz, sie werden vorgelesen.
 Heute ist ${now.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} (${today()}), ${now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr.`;
 }
 

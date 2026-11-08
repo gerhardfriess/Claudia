@@ -96,7 +96,7 @@ h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; color: v
 .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .quick { display: flex; gap: 8px; margin-top: 12px; }
-input[type=text], input[type=search], input[type=date], input[type=time], input[type=password], textarea, select {
+input[type=text], input[type=search], input[type=date], input[type=time], input[type=password], input[type=email], textarea, select {
   width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card);
 }
 textarea { resize: vertical; min-height: 120px; }
@@ -162,3 +162,5 @@ dialog::backdrop { background: rgba(10,20,20,.45); }
   opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20;
 }
 #toast.show { opacity: 1; }
+.mini.edit:hover { color: var(--accent); }
+.crow .pill { font-size: 11px; vertical-align: 1px; }
