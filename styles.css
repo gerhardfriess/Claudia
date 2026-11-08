@@ -190,3 +190,7 @@ dialog::backdrop { background: rgba(10,20,20,.45); }
 .mini.cal { opacity: .55; }
 .mini.cal.on { opacity: 1; }
 .linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.dlg:focus { outline: none; }
+
+.credit { background: var(--accent-soft); color: var(--accent); border: 0; border-radius: 999px; padding: 4px 10px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.credit.low { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }

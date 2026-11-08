@@ -42,4 +42,6 @@ Zuverlässig auch bei geschlossener App: 📅 an der Aufgabe (oder im Chat unter
 - Entwurf mit E-Mail-Adresse: zusätzlich „Als E-Mail öffnen“ (öffnet dein Mailprogramm mit Betreff und Text).
 - Spracherkennung: Chrome/Edge am PC, Chrome auf Android, Safari auf dem iPhone. Fallback: Mikrofon der Handy-Tastatur.
 
+Guthaben im Header („≈ $…“): Schätzung. Die API liefert das Restguthaben nicht; antippen, Stand aus der Console (Billing) eintragen, Claudia zieht die Kosten jeder Antwort ab (nur Verbrauch dieses Geräts).
+
 Bei einer Sicherheits-Ablehnung springt automatisch ein Ersatzmodell ein (`fallbacks: "default"`).

@@ -582,10 +582,12 @@ function submit(form, f) {
 // ---------- Dialoge ----------
 const dlg = $('#dlg');
 function openDialog(html, onSubmit) {
-  dlg.innerHTML = `<form class="dlg" method="dialog">${html}</form>`;
+  // autofocus aufs Formular: kein Eingabefeld bekommt automatisch den Fokus (iPhone fragt sonst nach Passwörtern)
+  dlg.innerHTML = `<form class="dlg" method="dialog" tabindex="-1" autofocus>${html}</form>`;
   const f = dlg.querySelector('form');
   f.addEventListener('submit', e => { const r = onSubmit(e.submitter?.value, new FormData(f)); if (r === false) e.preventDefault(); else render(); });
   if (!dlg.open) dlg.showModal();
+  f.focus({ preventScroll: true });
 }
 function taskDialog(t) {
   if (!t) return;
@@ -749,7 +751,7 @@ function contactsDialog() {
   }));
   count(); filter();
 }
-const APP_VERSION = '2026-11-08 · 14';
+const APP_VERSION = '2026-11-08 · 15';
 const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
 function contactEditDialog(c) {
   if (!c) return contactsDialog();
@@ -942,6 +944,51 @@ Du verschickst nie selbst; der Nutzer tippt im Entwurf auf "In WhatsApp öffnen"
 Heute ist ${now.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} (${today()}), ${now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr.`;
 }
 
+// ---------- Guthaben (Schätzung) ----------
+// Die API verrät das Restguthaben nicht. Der Nutzer trägt seinen Kontostand aus der Console ein,
+// Claudia zieht die Kosten jeder Antwort ab (Preise je 1 Mio. Tokens in USD, Stand Preisliste Nov. 2026).
+const PRICES = {
+  'claude-opus-5-5': { in: 4, out: 20, cr: 0.20 },
+  'claude-sonnet-5-5': { in: 2, out: 10, cr: 0.10 },
+  'claude-haiku-5-5': { in: 0.10, out: 0.50, cr: 0.01 },
+};
+function costOf(model, u) {
+  if (!u) return 0;
+  const p = PRICES[Object.keys(PRICES).find(k => String(model || '').startsWith(k))] || PRICES['claude-opus-5-5'];
+  return ((u.input_tokens || 0) * p.in + (u.output_tokens || 0) * p.out
+    + (u.cache_read_input_tokens || 0) * p.cr + (u.cache_creation_input_tokens || 0) * p.in * 1.25) / 1e6;
+}
+function addCost(usd) {
+  const c = S.settings.credit; if (!c) return;
+  c.spent = (c.spent || 0) + usd; saveLocal(); renderCredit();
+}
+const creditLeft = () => { const c = S.settings.credit; return c ? c.start - (c.spent || 0) : null; };
+function renderCredit() {
+  const b = $('#btn-credit'); if (!b) return;
+  const left = creditLeft();
+  b.textContent = left === null ? '$ ?' : '≈ $' + Math.max(0, left).toFixed(2);
+  b.classList.toggle('low', left !== null && left < 2);
+}
+function creditDialog() {
+  const c = S.settings.credit, left = creditLeft();
+  openDialog(`<h3>API-Guthaben</h3>
+    ${c ? `<div class="sync-state">Geschätzt übrig: $${Math.max(0, left).toFixed(2)}</div>
+      <div class="hint">Eingetragen am ${new Date(c.at).toLocaleDateString('de-DE')}: $${c.start.toFixed(2)} · seitdem auf diesem Gerät verbraucht: $${(c.spent || 0).toFixed(4)}</div>` : ''}
+    <div class="hint">Anthropic gibt das Restguthaben nicht über den API-Key heraus. Trag hier den Stand aus der
+      <a href="https://platform.claude.com/settings/billing" target="_blank" rel="noopener">Console (Billing)</a> ein – Claudia zieht dann die Kosten jeder Antwort ab.
+      Nur Schätzung: Verbrauch auf anderen Geräten zählt hier nicht mit, also ab und zu neu eintragen.</div>
+    <label>Aktuelles Guthaben in $<input type="text" inputmode="decimal" name="bal" placeholder="z. B. 18,50" autocomplete="off"></label>
+    <div class="actions">${c ? '<button class="btn danger" value="off" formnovalidate style="margin-right:auto">Anzeige aus</button>' : ''}
+    <button class="btn ghost" value="cancel" formnovalidate>Schließen</button><button class="btn" value="ok">Übernehmen</button></div>`,
+    (v, fd) => {
+      if (v === 'off') { delete S.settings.credit; saveLocal(); renderCredit(); return; }
+      if (v !== 'ok') return;
+      const n = parseFloat(String(fd.get('bal')).replace(/[^0-9,.-]/g, '').replace(',', '.'));
+      if (!isFinite(n) || n < 0) { toast('Bitte einen Betrag eintragen, z. B. 18,50'); return false; }
+      S.settings.credit = { start: n, at: Date.now(), spent: 0 }; saveLocal(); renderCredit(); toast('Guthaben übernommen');
+    });
+}
+
 let sdk = null;
 async function sendChat(text, prefillOnly = false, dictated = false) {
   if (prefillOnly) { render(); const ta = $('form[data-form=chat] textarea'); ta.value = text; grow(ta); ta.focus(); return; }
@@ -977,6 +1024,7 @@ async function sendChat(text, prefillOnly = false, dictated = false) {
       liveText = '';
       stream.on('text', t => { liveText += t; const el = $('#live-t'); if (el) { el.textContent = liveText; scrollChat(); } });
       const msg = await stream.finalMessage();
+      addCost(costOf(msg.model || model, msg.usage));
       S.chat.push({ role: 'assistant', content: msg.content }); save();
       spoken += msg.content.filter(b => b.type === 'text').map(b => b.text).join(' ') + ' ';
 
@@ -1119,6 +1167,8 @@ function checkReminders() {
 document.querySelectorAll('.tabbar button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));
 $('#btn-settings').addEventListener('click', settingsDialog);
 $('#btn-contacts').addEventListener('click', contactsDialog);
+$('#btn-credit').addEventListener('click', creditDialog);
+renderCredit();
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 window.addEventListener('storage', () => { S = load(); render(); });
 render();
