@@ -179,9 +179,28 @@ function addTask({ title, due = '', time = '', cat = 'Privat' }) {
   const t = { id: uid(), title: title.trim(), due, time, cat: cat === 'Geschäftlich' ? 'Geschäftlich' : 'Privat', done: false, created: Date.now() };
   S.tasks.push(t); save(); return t;
 }
+// Erledigte Aufgaben werden nach kurzer Zeit gelöscht (Speicher klein halten). In den 6 s davor
+// bleiben sie durchgestrichen sichtbar – nochmal tippen macht sie wieder offen.
+const UNDO_MS = 6000;
+const recentlyDone = t => t.done && t.doneAt && Date.now() - t.doneAt < UNDO_MS;
+const shown = t => !t.done || recentlyDone(t);
 function toggleTask(id, done) {
   const t = S.tasks.find(x => x.id === id); if (!t) return null;
-  t.done = done ?? !t.done; t.doneAt = t.done ? Date.now() : null; save(); return t;
+  const was = t.done;
+  t.done = done ?? !t.done; t.doneAt = t.done ? Date.now() : null;
+  const day = today(); if (S.doneDay?.d !== day) S.doneDay = { d: day, n: 0 };
+  if (t.done && !was) S.doneDay.n++; else if (!t.done && was) S.doneDay.n = Math.max(0, S.doneDay.n - 1);
+  save();
+  if (t.done) setTimeout(purgeDone, UNDO_MS + 100);
+  return t;
+}
+function purgeDone() {
+  const keep = S.tasks.filter(t => !t.done || recentlyDone(t));
+  if (keep.length === S.tasks.length) return;
+  S.tasks = keep;
+  S.notified = S.notified.filter(id => keep.some(t => t.id === id));
+  save();
+  if (!dlg.open) render();
 }
 function addNote({ title, text = '' }) {
   const n = { id: uid(), title: (title || text.split('\n')[0] || 'Notiz').trim().slice(0, 80), text, updated: Date.now() };
@@ -192,6 +211,7 @@ const sortTasks = arr => [...arr].sort((a, b) => (a.done - b.done) || ((a.due ||
 // ---------- Ansichten ----------
 let tab = 'today', taskFilter = 'offen', catFilter = 'Alle', noteQuery = '';
 function go(t) {
+  if (tab === 'chat' && t !== 'chat') clearDictationChat();
   tab = t;
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   render();
@@ -253,11 +273,11 @@ const quickAdd = (ph = 'Neue Aufgabe … (Enter)') => `<form class="quick" data-
   <button class="btn" aria-label="Hinzufügen">＋</button></form>`;
 
 function viewToday() {
-  const open = S.tasks.filter(t => !t.done);
+  const open = S.tasks.filter(shown);
   const over = sortTasks(open.filter(isOverdue));
   const tod = sortTasks(open.filter(isToday));
   const next = sortTasks(open.filter(t => t.due > today())).slice(0, 5);
-  const doneToday = S.tasks.filter(t => t.done && t.doneAt && iso(t.doneAt) === today()).length;
+  const doneToday = S.doneDay?.d === today() ? S.doneDay.n : 0;
   const date = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   return `<div class="greet"><img src="claudia.webp" alt="" class="portrait"><div><h1>${esc(greeting())}</h1><p class="sub">${date}</p></div></div>
   <button class="btn dictate" data-act="dictate">🎙 Diktieren</button>
@@ -276,18 +296,17 @@ function viewToday() {
 }
 
 function viewTasks() {
-  let list = S.tasks.filter(t => taskFilter === 'alle' || (taskFilter === 'offen' ? !t.done : t.done));
+  let list = S.tasks.filter(shown);
   if (catFilter !== 'Alle') list = list.filter(t => t.cat === catFilter);
   list = sortTasks(list);
   const chip = (val, cur, act) => `<button class="chip ${val === cur ? 'active' : ''}" data-act="${act}" data-v="${val}">${val[0].toUpperCase() + val.slice(1)}</button>`;
   return `<h1>Aufgaben</h1>
   ${quickAdd()}
   <div class="toolbar">
-    <div class="chips">${['offen', 'erledigt', 'alle'].map(v => chip(v, taskFilter, 'tfilter')).join('')}</div>
     <div class="chips">${['Alle', 'Privat', 'Geschäftlich'].map(v => chip(v, catFilter, 'cfilter')).join('')}</div>
   </div>
   <div class="list">${list.map(taskRow).join('') || '<div class="card empty">Keine Aufgaben in dieser Ansicht.</div>'}</div>
-  ${taskFilter !== 'offen' && S.tasks.some(t => t.done) ? '<p style="text-align:center"><button class="btn ghost" data-act="clear-done">Erledigte löschen</button></p>' : ''}`;
+  <p class="hint" style="text-align:center">Erledigte Aufgaben werden automatisch gelöscht.</p>`;
 }
 
 function noteRow(n) {
@@ -353,6 +372,18 @@ function taskOfTool(b) {
     }
   return null;
 }
+
+// Diktat-Chats sind Wegwerf-Chats: Wer Claudia verlässt (anderer Reiter oder andere App), dessen Diktat-Chat wird gelöscht.
+let clearPending = false;
+const isDictationChat = () => S.chat.some(m => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith(DICT));
+function clearDictationChat() {
+  if (!isDictationChat()) return;
+  if (busy) { clearPending = true; return; }      // Claudia antwortet noch – danach löschen
+  clearPending = false;
+  S.chat = []; S.draftEdits = {}; S.draftSent = {}; saveLocal();
+  if (document.visibilityState === 'visible') render();
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') clearDictationChat(); });
 
 // ---------- Nachrichten-Entwürfe (WhatsApp) ----------
 const DICT = '[Diktiert] ';
@@ -518,7 +549,7 @@ function bind(root) {
 function act(a, d) {
   switch (a) {
     case 'goto': return go(d.tab);
-    case 'toggle': { const t = toggleTask(d.id); if (t?.done) toast('Erledigt ✓'); return render(); }
+    case 'toggle': { const t = toggleTask(d.id); if (t?.done) toast('Erledigt ✓ – nochmal tippen macht es rückgängig'); return render(); }
     case 'del-task': S.tasks = S.tasks.filter(t => t.id !== d.id); save(); toast('Gelöscht'); return render();
     case 'edit-task': return taskDialog(S.tasks.find(t => t.id === d.id));
     case 'tfilter': taskFilter = d.v; return render();
@@ -718,7 +749,7 @@ function contactsDialog() {
   }));
   count(); filter();
 }
-const APP_VERSION = '2026-11-08 · 13';
+const APP_VERSION = '2026-11-08 · 14';
 const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
 function contactEditDialog(c) {
   if (!c) return contactsDialog();
@@ -905,6 +936,7 @@ Diktat: Nachrichten, die mit "[Diktiert]" beginnen, hat der Nutzer gesprochen; d
 Sobald der Empfänger feststeht: list_contacts prüfen, dann prepare_message mit dem genauen Namen aus der Liste. Empfänger können auch über ihren Alias genannt werden ("meine Frau", "meine Tochter"); der Kontakt mit ich=true ist der Nutzer selbst ("schick mir", "an mich"). Ist der Name unklar (mehrere Treffer), kurz nachfragen.
 Sprache: Hat der Empfänger eine Sprache hinterlegt, schreibst du die Nachricht in dieser Sprache – sinngemäß übersetzt, gleicher Ton, nichts dazuerfinden –, auch wenn diktiert auf Deutsch. Sag dem Nutzer dann kurz auf Deutsch, dass du übersetzt hast. Ohne Sprache bleibt sie in der diktierten Sprache.
 Kanal: Standard ist WhatsApp; sagt der Nutzer "Mail"/"E-Mail", nimm channel "email" mit einem kurzen Betreff in der Sprache des Empfängers. Sagt der Nutzer etwas über einen Kontakt (Beziehung, Sprache, E-Mail), speichere es mit update_contact.
+Abgehakte Aufgaben werden nach wenigen Sekunden automatisch gelöscht; sie lassen sich danach nicht mehr wieder öffnen.
 Erinnerungen: Hat eine Aufgabe Datum und Uhrzeit, klingelt Claudia nur, solange die App offen ist. Unter deiner Bestätigung erscheint ein 📅-Knopf, der einen Kalendertermin mit Alarm anlegt (klingelt auch bei geschlossener App); erwähne ihn kurz, wenn der Nutzer ausdrücklich einen Alarm oder Wecker möchte.
 Du verschickst nie selbst; der Nutzer tippt im Entwurf auf "In WhatsApp öffnen" bzw. "Als E-Mail öffnen" und dort auf Senden. Halte Antworten nach einem Diktat besonders kurz, sie werden vorgelesen.
 Heute ist ${now.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} (${today()}), ${now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr.`;
@@ -973,7 +1005,9 @@ async function sendChat(text, prefillOnly = false, dictated = false) {
     if (S.chat[S.chat.length - 1]?.role === 'user' && typeof S.chat[S.chat.length - 1].content === 'string') S.chat.pop();
     S.chat.push({ role: 'ui-error', text: txt });
   }
-  busy = false; liveText = ''; save(); render();
+  busy = false; liveText = ''; save();
+  if (clearPending && (document.visibilityState === 'hidden' || tab !== 'chat')) { clearDictationChat(); return; }
+  clearPending = false; render();
   if (dictated && S.settings.speak) speak(spoken.trim());
 }
 
@@ -988,11 +1022,12 @@ function unlockAudio() {
 }
 ['pointerdown', 'keydown', 'touchend'].forEach(ev => document.addEventListener(ev, unlockAudio, { passive: true }));
 
-// Alarmton: 3 × drei kurze Pieptöne (ca. 3 s)
+// Alarmton: 3 × drei kurze Pieptöne (ca. 3 s). Die Töne werden gemerkt, damit eine Reaktion sie sofort stoppt.
+let alarmNodes = [];
 function playAlarm() {
   return new Promise(resolve => {
     unlockAudio();
-    if (!audioCtx) return resolve();
+    if (!audioCtx) return setTimeout(resolve, 3100);
     const t0 = audioCtx.currentTime + 0.05;
     for (let r = 0; r < 3; r++) for (let i = 0; i < 3; i++) {
       const at = t0 + r * 1.0 + i * 0.2;
@@ -1002,24 +1037,34 @@ function playAlarm() {
       g.gain.exponentialRampToValueAtTime(0.25, at + 0.01);
       g.gain.exponentialRampToValueAtTime(0.0001, at + 0.15);
       o.connect(g).connect(audioCtx.destination); o.start(at); o.stop(at + 0.16);
+      alarmNodes.push(o);
     }
     try { navigator.vibrate?.([300, 150, 300, 150, 300]); } catch {}
     setTimeout(resolve, 3100);
   });
 }
+function stopAlarmSound() {
+  for (const o of alarmNodes) try { o.stop(); } catch {}
+  alarmNodes = [];
+  try { navigator.vibrate?.(0); } catch {}
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+}
 
+// Alarm läuft, bis im Alarmfenster ein Knopf getippt wird
+let alarmActive = false, alarmList = [];
 function showAlarm(list) {
+  for (const t of list) if (!alarmList.some(x => x.id === t.id)) alarmList.push(t);
   let el = $('#alarm');
   if (!el) { el = document.createElement('div'); el.id = 'alarm'; document.body.appendChild(el); }
   el.innerHTML = `<div class="alarm-box" role="alertdialog" aria-label="Erinnerung">
     <div class="alarm-head">⏰ Erinnerung</div>
-    ${list.map(t => `<div class="alarm-item"><b>${esc(t.title)}</b><span class="hint">${t.due === today() ? 'heute' : fmtDate(t.due)} ${esc(t.time)}</span>
+    ${alarmList.map(t => `<div class="alarm-item"><b>${esc(t.title)}</b><span class="hint">${t.due === today() ? 'heute' : fmtDate(t.due)} ${esc(t.time)}</span>
       <div class="row"><button class="btn" data-a="done" data-id="${t.id}">Erledigt</button>
       <button class="btn ghost" data-a="snooze" data-id="${t.id}">10 Min. später</button></div></div>`).join('')}
-    <button class="btn ghost" data-a="close" style="width:100%">OK</button></div>`;
+    <button class="btn ghost" data-a="close" style="width:100%">OK – Alarm aus</button></div>`;
   el.hidden = false;
   el.querySelectorAll('button[data-a]').forEach(b => b.onclick = () => {
-    speechSynthesis?.cancel();
+    alarmActive = false; stopAlarmSound();          // jede Reaktion beendet den Ton
     const t = S.tasks.find(x => x.id === b.dataset.id);
     if (b.dataset.a === 'done' && t) { toggleTask(t.id, true); toast('Erledigt ✓'); }
     if (b.dataset.a === 'snooze' && t) {
@@ -1027,23 +1072,37 @@ function showAlarm(list) {
       t.due = iso(n); t.time = n.toTimeString().slice(0, 5);
       S.notified = S.notified.filter(x => x !== t.id); save(); toast('Erinnere dich um ' + t.time);
     }
+    alarmList = alarmList.filter(x => x.id !== b.dataset.id);
     b.closest('.alarm-item')?.remove();
-    if (b.dataset.a === 'close' || !el.querySelector('.alarm-item')) el.hidden = true;
+    if (b.dataset.a === 'close' || !el.querySelector('.alarm-item')) { el.hidden = true; alarmList = []; }
     render();
   });
 }
 
-let alarmRunning = false;
+const waitSpeech = () => new Promise(res => {
+  const t0 = Date.now();
+  const tick = () => (!alarmActive || !speechSynthesis.speaking && Date.now() - t0 > 300 || Date.now() - t0 > 20000) ? res() : setTimeout(tick, 200);
+  tick();
+});
 async function fireAlarm(list) {
   if (document.visibilityState !== 'visible' && 'Notification' in window && Notification.permission === 'granted') {
     for (const t of list) try { new Notification('⏰ Claudia erinnert dich', { body: t.title, icon: 'icon.svg', tag: t.id, requireInteraction: true }); } catch {}
   }
   showAlarm(list);
-  if (alarmRunning) return; alarmRunning = true;
-  try {
-    if (S.settings.alarmSound !== false) await playAlarm();
-    if (S.settings.alarmSpeak !== false) speak('Erinnerung: ' + list.map(t => t.title).join('. Und: '));
-  } finally { alarmRunning = false; }
+  if (alarmActive) return;                          // läuft schon – neue Erinnerung wird mit angesagt
+  alarmActive = true;
+  const sound = S.settings.alarmSound !== false, say = S.settings.alarmSpeak !== false && 'speechSynthesis' in window;
+  if (!sound && !say) { alarmActive = false; return; }
+  let round = 0;
+  while (alarmActive) {
+    if (sound) await playAlarm();
+    if (!alarmActive) break;
+    // Ansage beim ersten Mal und danach jede 3. Runde
+    if (say && round % 3 === 0) { speak('Erinnerung: ' + alarmList.map(t => t.title).join('. Und: ')); await waitSpeech(); }
+    if (!sound && round >= 2) break;               // ohne Ton: nur dreimal ansagen
+    round++;
+    await new Promise(r => setTimeout(r, 1200));
+  }
 }
 
 function checkReminders() {
@@ -1063,7 +1122,7 @@ $('#btn-contacts').addEventListener('click', contactsDialog);
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 window.addEventListener('storage', () => { S = load(); render(); });
 render();
-checkReminders(); setInterval(checkReminders, 15_000);
+purgeDone(); checkReminders(); setInterval(() => { purgeDone(); checkReminders(); }, 15_000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkReminders(); });
 // Sync: beim Start, beim Zurückkehren in die App, wieder online und alle 90 s im Vordergrund
 syncNow();

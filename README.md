@@ -27,11 +27,13 @@ Anthropic API-Key in den Einstellungen eintragen (console.anthropic.com → API 
 Claudia kann Aufgaben ansehen, anlegen, ändern, abhaken sowie Notizen speichern und durchsuchen.
 
 ## Erinnerungen
-Aufgaben mit Datum und Uhrzeit klingeln zur Zeit: Alarmton, Ansage („Erinnerung: …“) und ein Alarmfenster mit „Erledigt“ / „10 Min. später“. Funktioniert, solange Claudia geöffnet ist; war sie geschlossen, kommt der Alarm beim nächsten Öffnen (nur für die letzten 12 Stunden). Einstellbar unter ⚙︎ → Erinnerungen, dort auch „Alarm testen“.
+Aufgaben mit Datum und Uhrzeit klingeln zur Zeit: Alarmton (wiederholt sich, bis im Alarmfenster getippt wird), Ansage („Erinnerung: …“) und ein Alarmfenster mit „Erledigt“ / „10 Min. später“ / „OK – Alarm aus“.
+Erledigte Aufgaben werden 6 s nach dem Abhaken automatisch gelöscht (bis dahin nochmal tippen = rückgängig). Funktioniert, solange Claudia geöffnet ist; war sie geschlossen, kommt der Alarm beim nächsten Öffnen (nur für die letzten 12 Stunden). Einstellbar unter ⚙︎ → Erinnerungen, dort auch „Alarm testen“.
 Zuverlässig auch bei geschlossener App: 📅 an der Aufgabe (oder im Chat unter „Aufgabe angelegt“, oder im Bearbeiten-Dialog „Speichern + Kalender“) erzeugt einen Kalendertermin (.ics) mit Alarm zur Uhrzeit; am iPhone „Hinzufügen“ tippen.
 
 ## Diktat & WhatsApp
 - 🎙 auf der Startseite oder im Chat: sprechen, nochmal tippen (oder Pause) → Text geht an Claudia.
+- Ein Chat mit Diktat wird gelöscht, sobald du Claudia verlässt (anderer Reiter oder andere App, auch nach „In WhatsApp öffnen“). Getippte Chats bleiben.
 - Claudia korrigiert den diktierten Text und fragt, ob und an wen er gehen soll. Nennst du den Empfänger gleich im Diktat („Schreib Maria, dass …“), kommt sofort der Entwurf.
 - Der Entwurf ist editierbar; „In WhatsApp öffnen“ öffnet WhatsApp mit Kontakt und Text, dort tippst du auf Senden.
 - Kontakte über das Personen-Symbol oben rechts (neben ⚙︎; die Zahl zeigt, wie viele freigegeben sind): Adressbuch als vCard (.vcf) importieren, auf Android auch direkt aus dem Telefonbuch, oder einzeln eintragen (Nummer mit +Ländervorwahl; 0171 … wird beim Import zu +49 171 …).
