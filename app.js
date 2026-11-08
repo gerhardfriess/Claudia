@@ -160,7 +160,7 @@ function viewChat() {
   if (busy) parts.push(`<div class="msg bot" id="live"><span id="live-t">${esc(liveText)}</span><span class="typing"></span></div>`);
   const empty = !S.chat.length && !busy;
   return `<div class="chat-wrap"><div class="toolbar" style="justify-content:space-between;align-items:center;margin-top:0">
-      <h1 style="margin:0">Claudia</h1>
+      <h1 class="chat-title"><img src="claudia.webp" alt="" class="portrait">Claudia</h1>
       ${S.chat.length ? '<button class="btn ghost" data-act="new-chat">Neuer Chat</button>' : ''}</div>
     ${!getKey() ? `<div class="card" style="padding:14px;margin-bottom:12px">Für den Chat braucht Claudia einen Anthropic API-Key.
       <div style="margin-top:8px"><button class="btn" data-act="settings">API-Key eintragen</button></div></div>` : ''}
@@ -648,7 +648,7 @@ function checkReminders() {
 }
 
 // ---------- Start ----------
-document.querySelectorAll('.tabbar button, .topbar .avatar').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));
+document.querySelectorAll('.tabbar button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));
 $('#btn-settings').addEventListener('click', settingsDialog);
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 window.addEventListener('storage', () => { S = load(); render(); });
