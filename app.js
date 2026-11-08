@@ -383,7 +383,11 @@ function clearDictationChat() {
   S.chat = []; S.draftEdits = {}; S.draftSent = {}; saveLocal();
   if (document.visibilityState === 'visible') render();
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') clearDictationChat(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') clearDictationChat();
+  else render();                                   // nach Rückkehr (z. B. aus WhatsApp) Ansicht neu aufbauen
+});
+window.addEventListener('pageshow', e => { if (e.persisted) render(); });
 
 // ---------- Nachrichten-Entwürfe (WhatsApp) ----------
 const DICT = '[Diktiert] ';
@@ -453,9 +457,20 @@ function openWhatsApp(id) {
   if (c && !num) toast('Nummer bitte international speichern (z. B. +49 …)');
   const url = `https://wa.me/${num || ''}?text=${encodeURIComponent(text)}`;
   S.draftSent[id] = 'wa'; save();
-  window.open(url, '_blank', 'noopener');
   render();
+  if (IS_IOS) {
+    // iPhone: window.open öffnet in der Home-Bildschirm-App ein In-App-Browserfenster, das nach der
+    // Übergabe an WhatsApp leer stehen bleibt (weißer Bildschirm). Deshalb WhatsApp direkt per App-Link öffnen.
+    const app = `whatsapp://send?${num ? 'phone=' + num + '&' : ''}text=${encodeURIComponent(text)}`;
+    const t0 = Date.now();
+    location.href = app;
+    // Kein WhatsApp installiert → Seite bleibt sichtbar → Hinweis statt leerer Seite
+    setTimeout(() => { if (document.visibilityState === 'visible' && Date.now() - t0 < 3000) toast('WhatsApp ließ sich nicht öffnen – ist die App installiert?'); }, 2000);
+    return;
+  }
+  window.open(url, '_blank', 'noopener');
 }
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 // ---------- Diktat (Spracherkennung des Browsers) ----------
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -751,7 +766,7 @@ function contactsDialog() {
   }));
   count(); filter();
 }
-const APP_VERSION = '2026-11-08 · 15';
+const APP_VERSION = '2026-11-08 · 16';
 const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
 function contactEditDialog(c) {
   if (!c) return contactsDialog();
