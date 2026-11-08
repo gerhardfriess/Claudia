@@ -18,9 +18,145 @@ function load() {
   try { const d = JSON.parse(localStorage.getItem(STORE)); if (d) return { ...defaults(), ...d, settings: { ...defaults().settings, ...d.settings } }; } catch {}
   return defaults();
 }
-function save() { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch { toast('Speichern fehlgeschlagen'); } }
+function saveLocal() { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch { toast('Speichern fehlgeschlagen'); } }
+function save() { saveLocal(); scheduleSync(); }
 const getKey = () => { try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; } };
 const setKey = k => { try { k ? localStorage.setItem(KEY_STORE, k) : localStorage.removeItem(KEY_STORE); } catch {} };
+
+// ---------- Sync PC ↔ Handy (verschlüsselt in einem privaten GitHub-Gist) ----------
+// Drei-Wege-Abgleich je Datensatz-ID gegen den Stand des letzten Syncs (BASE_STORE):
+// nur hier geändert → hier gewinnt, nur dort geändert → dort gewinnt, beide → dieses Gerät gewinnt.
+// Löschen wird erkannt, weil der Datensatz im letzten Stand noch da war.
+const SYNC_STORE = 'claudia.sync', BASE_STORE = 'claudia.syncbase', SYNC_FILE = 'claudia-sync.json';
+const SYNC_COLS = ['tasks', 'notes', 'contacts'];
+const syncCfg = () => { try { return JSON.parse(localStorage.getItem(SYNC_STORE)) || {}; } catch { return {}; } };
+const setSyncCfg = o => { try { localStorage.setItem(SYNC_STORE, JSON.stringify(o)); } catch {} };
+let syncTimer = null, syncing = false, syncAgain = false, syncMsg = '';
+function scheduleSync(ms = 2500) { if (!syncCfg().token) return; clearTimeout(syncTimer); syncTimer = setTimeout(() => syncNow(), ms); }
+function syncLabel() {
+  const c = syncCfg();
+  if (syncMsg) return syncMsg;
+  return c.last ? `✓ Zuletzt synchronisiert: ${new Date(c.last).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : 'Noch nicht synchronisiert';
+}
+function setSyncMsg(m) { syncMsg = m; const el = document.getElementById('sync-state'); if (el) el.textContent = syncLabel(); }
+
+const toB64 = buf => { const a = new Uint8Array(buf); let s = ''; for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode(...a.subarray(i, i + 0x8000)); return btoa(s); };
+const fromB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const keyCache = new Map();
+async function syncKey(pass, salt) {
+  const id = pass + '|' + toB64(salt);
+  if (!keyCache.has(id)) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+    keyCache.set(id, await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']));
+  }
+  return keyCache.get(id);
+}
+async function encryptData(obj, pass, salt) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await syncKey(pass, salt), new TextEncoder().encode(JSON.stringify(obj)));
+  return { app: 'Claudia', v: 1, salt: toB64(salt), iv: toB64(iv), data: toB64(data) };
+}
+async function decryptData(env, pass) {
+  if (env?.app !== 'Claudia' || !env.data) throw new Error('Sync-Datei ist beschädigt');
+  try {
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(env.iv) }, await syncKey(pass, fromB64(env.salt)), fromB64(env.data));
+    return JSON.parse(new TextDecoder().decode(plain));
+  } catch { throw new Error('Sync-Passwort passt nicht zu den Daten der anderen Geräte'); }
+}
+async function gh(path, opts = {}) {
+  const r = await fetch('https://api.github.com' + path, {
+    ...opts, cache: 'no-store',
+    headers: { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + syncCfg().token, 'X-GitHub-Api-Version': '2022-11-28', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
+  });
+  if (r.status === 401) throw new Error('GitHub-Token ungültig oder abgelaufen');
+  if (r.status === 403 || r.status === 404) throw new Error('GitHub verweigert den Zugriff. Hat der Token das Recht „gist“?');
+  if (!r.ok) throw new Error('GitHub antwortet mit Fehler ' + r.status);
+  return r.json();
+}
+async function findGist() {
+  for (let page = 1; page <= 5; page++) {
+    const list = await gh(`/gists?per_page=100&page=${page}`);
+    const g = list.find(x => x.files?.[SYNC_FILE]); if (g) return g.id;
+    if (list.length < 100) break;
+  }
+  return null;
+}
+const hash = x => JSON.stringify(x);
+function merge3(local, remote, base) {
+  const L = new Map(local.map(x => [x.id, x])), R = new Map(remote.map(x => [x.id, x])), out = [];
+  for (const id of new Set([...L.keys(), ...R.keys()])) {
+    const l = L.get(id), r = R.get(id), b = base[id];
+    const lChanged = l ? hash(l) !== b : b !== undefined;
+    const rChanged = r ? hash(r) !== b : b !== undefined;
+    let pick;
+    if (l && r) pick = rChanged && !lChanged ? r : l;
+    else if (l) pick = b !== undefined && !lChanged ? null : l;   // dort gelöscht, hier unverändert → löschen
+    else pick = b !== undefined && !rChanged ? null : r;          // hier gelöscht, dort unverändert → löschen
+    if (pick) out.push(pick);
+  }
+  return out;
+}
+// Gleicher Kontakt auf zwei Geräten getrennt angelegt → zusammenführen (leere Felder ergänzen)
+function dedupeContacts(list) {
+  const m = new Map();
+  for (const c of list) {
+    const k = String(c.name || '').trim().toLowerCase(), o = m.get(k);
+    if (!o) { m.set(k, c); continue; }
+    for (const [f, v] of Object.entries(c)) if (f !== 'id' && (o[f] === undefined || o[f] === '' || o[f] === null)) o[f] = v;
+  }
+  return [...m.values()];
+}
+function getBase() { try { return JSON.parse(localStorage.getItem(BASE_STORE)) || {}; } catch { return {}; } }
+function setBase(d) {
+  const b = {}; for (const k of SYNC_COLS) { b[k] = {}; for (const x of d[k] || []) b[k][x.id] = hash(x); }
+  try { localStorage.setItem(BASE_STORE, JSON.stringify(b)); } catch {}
+}
+async function syncNow(manual = false) {
+  const cfg = syncCfg(); if (!cfg.token || !cfg.pass) return false;
+  if (!navigator.onLine) { setSyncMsg('Offline – Sync folgt, sobald du online bist'); return false; }
+  if (syncing) { syncAgain = true; return false; }
+  syncing = true; setSyncMsg('Synchronisiere …');
+  const snap = hash(SYNC_COLS.map(k => S[k]));
+  try {
+    if (!cfg.gistId) { cfg.gistId = await findGist(); if (cfg.gistId) setSyncCfg({ ...syncCfg(), gistId: cfg.gistId }); }
+    let remote = null, salt = null;
+    if (cfg.gistId) {
+      const f = (await gh('/gists/' + cfg.gistId)).files?.[SYNC_FILE];
+      if (f) {
+        const env = JSON.parse(f.truncated ? await (await fetch(f.raw_url, { cache: 'no-store' })).text() : f.content);
+        remote = await decryptData(env, cfg.pass); salt = fromB64(env.salt);
+      }
+    }
+    const base = getBase(), merged = {};
+    for (const k of SYNC_COLS) merged[k] = remote ? merge3(S[k] || [], remote[k] || [], base[k] || {}) : [...(S[k] || [])];
+    merged.contacts = dedupeContacts(merged.contacts);
+    merged.notes.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+    // Während des Abgleichs lokal geändert? Dann nichts überschreiben, gleich nochmal.
+    if (hash(SYNC_COLS.map(k => S[k])) !== snap) { syncAgain = true; return false; }
+    if (SYNC_COLS.some(k => hash(merged[k]) !== hash(S[k]))) {
+      Object.assign(S, merged); saveLocal();
+      if (!dlg.open && !busy) render();
+    }
+    if (!remote || SYNC_COLS.some(k => hash(merged[k]) !== hash(remote[k] || []))) {
+      const env = await encryptData({ at: Date.now(), tasks: merged.tasks, notes: merged.notes, contacts: merged.contacts }, cfg.pass, salt || crypto.getRandomValues(new Uint8Array(16)));
+      const files = { [SYNC_FILE]: { content: JSON.stringify(env) } };
+      if (cfg.gistId) await gh('/gists/' + cfg.gistId, { method: 'PATCH', body: JSON.stringify({ files }) });
+      else { const g = await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Claudia – verschlüsselte Sync-Daten', public: false, files }) }); setSyncCfg({ ...syncCfg(), gistId: g.id }); }
+    }
+    setBase(merged);
+    setSyncCfg({ ...syncCfg(), last: Date.now() });
+    setSyncMsg('');
+    if (manual) toast('Synchronisiert ✓');
+    return true;
+  } catch (e) {
+    setSyncMsg('⚠︎ ' + (e.message || 'Sync fehlgeschlagen'));
+    if (manual) toast(e.message || 'Sync fehlgeschlagen');
+    return false;
+  } finally {
+    syncing = false;
+    if (syncAgain) { syncAgain = false; scheduleSync(800); }
+  }
+}
 
 // ---------- Helfer ----------
 const $ = s => document.querySelector(s);
@@ -382,13 +518,36 @@ function settingsDialog() {
     <h3 style="margin-top:6px">Erinnerungen</h3>
     <div class="hint">Benachrichtigung zur eingetragenen Uhrzeit, solange Claudia geöffnet ist (auch im Hintergrund-Tab).</div>
     <button class="btn ghost" value="notify" formnovalidate>${'Notification' in window && Notification.permission === 'granted' ? 'Benachrichtigungen sind aktiv ✓' : 'Benachrichtigungen erlauben'}</button>
-    <h3 style="margin-top:6px">Daten (PC ↔ Handy)</h3>
-    <div class="hint">Daten liegen lokal auf jedem Gerät. Zum Übertragen exportieren und auf dem anderen Gerät importieren (z. B. über OneDrive). Der API-Key wird nicht exportiert.</div>
-    <div class="row"><button class="btn ghost" value="export" formnovalidate>Exportieren</button><button class="btn ghost" value="import" formnovalidate>Importieren</button></div>
+    <h3 style="margin-top:6px">Sync PC ↔ Handy</h3>
+    ${syncCfg().token ? `
+      <div class="hint">Aufgaben, Notizen und Kontakte werden automatisch abgeglichen, verschlüsselt mit deinem Sync-Passwort. Chat, API-Key und Einstellungen bleiben auf dem Gerät.</div>
+      <div class="sync-state" id="sync-state">${esc(syncLabel())}</div>
+      <div class="row"><button class="btn ghost" value="sync-now" formnovalidate>Jetzt synchronisieren</button><button class="btn danger" value="sync-off" formnovalidate>Sync hier beenden</button></div>`
+    : `
+      <div class="hint">Einmal auf <b>jedem</b> Gerät einrichten, mit demselben Token und demselben Sync-Passwort. Die Daten liegen verschlüsselt in einem privaten Gist in deinem GitHub-Konto; ohne das Passwort kann sie niemand lesen.</div>
+      <div class="hint">1. <a href="https://github.com/settings/tokens/new?scopes=gist&description=Claudia%20Sync" target="_blank" rel="noopener">GitHub-Token erstellen</a> (nur Recht „gist“, Ablauf nach Wunsch) und hier einfügen.<br>2. Ein Sync-Passwort ausdenken (mind. 8 Zeichen) und auf allen Geräten gleich eintragen.</div>
+      <label>GitHub-Token<input type="password" name="stoken" placeholder="ghp_…" autocomplete="off"></label>
+      <label>Sync-Passwort<input type="password" name="spass" autocomplete="new-password"></label>
+      <button class="btn ghost" value="sync-setup" formnovalidate>Sync einrichten</button>`}
+    <details class="hint"><summary>Manuell übertragen (Datei)</summary>
+      <div style="margin:8px 0">Exportieren und auf dem anderen Gerät importieren (z. B. über OneDrive). Der API-Key wird nicht exportiert.</div>
+      <div class="row"><button class="btn ghost" value="export" formnovalidate>Exportieren</button><button class="btn ghost" value="import" formnovalidate>Importieren</button></div></details>
     <div class="actions"><button class="btn ghost" value="cancel" formnovalidate>Schließen</button><button class="btn" value="ok">Speichern</button></div>`,
     (v, fd) => {
       if (v === 'export') return exportData(), false;
       if (v === 'import') return importData(), false;
+      if (v === 'sync-now') { syncNow(true); return false; }
+      if (v === 'sync-off') {
+        if (!confirm('Sync auf diesem Gerät beenden? Deine Daten bleiben hier und im Gist erhalten.')) return false;
+        setSyncCfg({}); try { localStorage.removeItem(BASE_STORE); } catch {} toast('Sync beendet'); setTimeout(settingsDialog); return;
+      }
+      if (v === 'sync-setup' || (v === 'ok' && fd.get('stoken')?.trim())) {
+        const token = fd.get('stoken').trim(), pass = fd.get('spass');
+        if (!token || pass.length < 8) { toast('Token und Sync-Passwort (mind. 8 Zeichen) eintragen'); return false; }
+        setSyncCfg({ token, pass });
+        syncNow(true).then(ok => { if (!ok) setSyncCfg({}); if (dlg.open) settingsDialog(); });
+        if (v === 'sync-setup') return false;
+      }
       if (v === 'notify') { Notification?.requestPermission().then(p => toast(p === 'granted' ? 'Benachrichtigungen aktiv' : 'Nicht erlaubt')); return false; }
       if (v !== 'ok') return;
       Object.assign(s, { name: fd.get('name').trim(), model: fd.get('model'), effort: fd.get('effort'), autoSend: fd.has('autoSend'), speak: fd.has('speak') });
@@ -465,7 +624,7 @@ function contactsDialog() {
   }));
   count(); filter();
 }
-const APP_VERSION = '2026-11-08 · 7';
+const APP_VERSION = '2026-11-08 · 8';
 const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
 function contactEditDialog(c) {
   if (!c) return contactsDialog();
@@ -735,5 +894,10 @@ dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 window.addEventListener('storage', () => { S = load(); render(); });
 render();
 checkReminders(); setInterval(checkReminders, 60_000);
+// Sync: beim Start, beim Zurückkehren in die App, wieder online und alle 90 s im Vordergrund
+syncNow();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
+window.addEventListener('online', () => syncNow());
+setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 90_000);
 setInterval(() => { if (tab === 'today' && !dlg.open) render(); }, 5 * 60_000);
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});

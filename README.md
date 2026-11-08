@@ -17,7 +17,9 @@ Online: https://gerhardfriess.github.io/Claudia/ (Repo gerhardfriess/Claudia). A
 
 ## Daten
 - Alles bleibt lokal im Browser des jeweiligen Geräts (localStorage).
-- PC ↔ Handy: Einstellungen → Exportieren / Importieren (JSON, z. B. über OneDrive). Beim Import wird zusammengeführt.
+- **Sync PC ↔ Handy** (⚙︎ → Sync): Aufgaben, Notizen und Kontakte werden automatisch abgeglichen – beim Start, beim Zurückkehren in die App, nach jeder Änderung und alle 90 s. Speicherort: ein privates Gist (`claudia-sync.json`) im GitHub-Konto, AES-256-verschlüsselt mit dem Sync-Passwort (PBKDF2). Einrichtung auf jedem Gerät mit demselben GitHub-Token (Recht „gist“) und Sync-Passwort. Abgleich je Datensatz gegen den letzten Stand, Löschen wird übertragen; bei gleichzeitiger Änderung gewinnt das Gerät, das gerade synchronisiert.
+- Chat, API-Key, Sync-Zugang und Einstellungen bleiben auf dem Gerät.
+- Alternativ manuell: Einstellungen → Manuell übertragen → Exportieren / Importieren (JSON).
 - Der API-Key wird nur lokal gespeichert, nie exportiert, und geht direkt an api.anthropic.com.
 
 ## KI-Chat
