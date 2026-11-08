@@ -39,7 +39,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .brand img { border-radius: 8px; }
 #btn-settings { justify-self: end; }
 .chat-title { margin: 0; display: flex; align-items: center; gap: 12px; }
-.portrait { width: 56px; height: auto; display: block; }
+.portrait { width: 56px; height: auto; display: block; border-radius: 24px; }
 .icon-btn { background: none; border: 0; font-size: 22px; padding: 6px 10px; border-radius: 10px; cursor: pointer; color: var(--muted); }
 .icon-btn:hover { background: var(--accent-soft); color: var(--accent); }
 
