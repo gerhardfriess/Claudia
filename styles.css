@@ -22,6 +22,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; overflow-x: hidden; }
 body {
   background: var(--bg); color: var(--text);
   font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -98,6 +99,7 @@ h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; color: v
 .quick { display: flex; gap: 8px; margin-top: 12px; }
 input[type=text], input[type=search], input[type=date], input[type=time], input[type=password], input[type=email], textarea, select {
   width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+  font-size: 16px; /* unter 16px zoomt Safari (iPhone) beim Antippen hinein */
 }
 textarea { resize: vertical; min-height: 120px; }
 input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -131,9 +133,9 @@ dialog::backdrop { background: rgba(10,20,20,.45); }
   position: fixed; left: 0; right: 0; bottom: calc(58px + env(safe-area-inset-bottom)); z-index: 4;
   background: var(--bg); padding: 8px 16px; border-top: 1px solid var(--line);
 }
-.composer form { display: flex; gap: 8px; max-width: 728px; margin: 0 auto; }
-.composer textarea { min-height: 44px; max-height: 140px; height: 44px; }
-.chat-wrap { padding-bottom: 70px; }
+.composer form { display: flex; gap: 8px; max-width: 728px; margin: 0 auto; align-items: flex-end; }
+.composer textarea { min-height: 44px; max-height: 40vh; height: 44px; resize: none; overflow-y: hidden; line-height: 1.35; }
+.chat-wrap { padding-bottom: calc(var(--composer-h, 61px) + 10px); }
 .suggest { display: flex; gap: 6px; flex-wrap: wrap; }
 .typing::after { content: '…'; animation: blink 1s infinite; }
 @keyframes blink { 50% { opacity: .2; } }

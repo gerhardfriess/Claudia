@@ -305,7 +305,7 @@ function viewChat() {
       <div class="suggest">${['Plane meinen Tag', 'Was ist diese Woche fällig?', 'Notiere: Reifenwechsel bis Ende November', 'Fasse meine Notizen zusammen'].map(s => `<button class="chip" data-act="ask" data-q="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : ''}
     <div class="chat">${parts.join('')}</div></div>
   <div class="composer"><form data-form="chat">
-    <textarea name="q" placeholder="${rec ? 'Ich höre zu …' : 'Nachricht an Claudia … oder 🎙 tippen'}" rows="1" ${busy ? 'disabled' : ''}></textarea>
+    <textarea name="q" placeholder="${rec ? 'Ich höre zu …' : 'Nachricht an Claudia …'}" rows="1" ${busy ? 'disabled' : ''}></textarea>
     <button type="button" class="btn mic ${rec ? 'listening' : ''}" data-act="dictate" ${busy ? 'disabled' : ''} aria-label="Diktieren" title="Diktieren">${rec ? '■' : '🎙'}</button>
     <button class="btn" ${busy ? 'disabled' : ''} aria-label="Senden">➤</button></form></div>`;
 }
@@ -401,7 +401,7 @@ function startDictation() {
   r.onresult = e => {
     // Bei jedem Ereignis komplett neu zusammensetzen (vermeidet doppelte Wörter auf Android)
     heard = [...e.results].map(x => x[0].transcript).join(' ').replace(/\s+/g, ' ').trim();
-    const ta = $('form[data-form=chat] textarea'); if (ta) ta.value = (base ? base + ' ' : '') + heard;
+    const ta = $('form[data-form=chat] textarea'); if (ta) { ta.value = (base ? base + ' ' : '') + heard; grow(ta); }
   };
   r.onerror = e => {
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Mikrofon ist nicht erlaubt');
@@ -411,10 +411,10 @@ function startDictation() {
     rec = null;
     const txt = (($('form[data-form=chat] textarea')?.value) || '').trim();
     if (heard && txt && S.settings.autoSend) sendChat(txt, false, true);
-    else { render(); const ta = $('form[data-form=chat] textarea'); if (ta) { ta.value = txt; ta.focus(); } }
+    else { render(); const ta = $('form[data-form=chat] textarea'); if (ta) { ta.value = txt; grow(ta); ta.focus(); } }
   };
   rec = r; render();
-  const ta = $('form[data-form=chat] textarea'); if (ta) ta.value = base;
+  const ta = $('form[data-form=chat] textarea'); if (ta) { ta.value = base; grow(ta); }
   try { r.start(); } catch { rec = null; render(); }
 }
 function speak(text) {
@@ -426,6 +426,21 @@ function speak(text) {
   u.voice = v.find(v => /katja|anna|hedda|marlene|vicki|female|frau/i.test(v.name)) || v[0] || null;
   speechSynthesis.speak(u);
 }
+// Textfelder wachsen mit dem Text (Chat-Eingabe bis 40 % der Bildschirmhöhe, danach scrollt sie)
+function grow(ta) {
+  if (!ta) return;
+  ta.style.height = 'auto';
+  const max = ta.closest('.composer') ? window.innerHeight * 0.4 : Infinity;
+  const h = ta.scrollHeight + 2;
+  ta.style.height = Math.min(h, max) + 'px';
+  ta.style.overflowY = h > max ? 'auto' : 'hidden';
+  const comp = ta.closest('.composer');
+  if (comp) document.documentElement.style.setProperty('--composer-h', comp.offsetHeight + 'px');
+}
+function growChat() { grow($('form[data-form=chat] textarea')); }
+document.addEventListener('input', e => {
+  if (e.target.matches?.('.composer textarea, textarea[data-draft]')) grow(e.target);
+});
 function scrollChat() { requestAnimationFrame(() => { const m = $('#view'); m.scrollTop = m.scrollHeight; }); }
 
 // ---------- Events ----------
@@ -437,6 +452,8 @@ function bind(root) {
   const nq = $('#note-q');
   if (nq) nq.addEventListener('input', () => { noteQuery = nq.value; const pos = nq.selectionStart; render(); const n = $('#note-q'); n.focus(); n.setSelectionRange(pos, pos); });
   const ta = root.querySelector('form[data-form=chat] textarea');
+  root.querySelectorAll('textarea[data-draft]').forEach(grow);
+  growChat();
   if (ta) ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ta.form.requestSubmit(); } });
 }
 function act(a, d) {
@@ -624,7 +641,7 @@ function contactsDialog() {
   }));
   count(); filter();
 }
-const APP_VERSION = '2026-11-08 · 9';
+const APP_VERSION = '2026-11-08 · 10';
 const LANGS = ['Deutsch', 'Englisch', 'Spanisch', 'Baskisch', 'Französisch', 'Italienisch', 'Portugiesisch'];
 function contactEditDialog(c) {
   if (!c) return contactsDialog();
@@ -817,7 +834,7 @@ Heute ist ${now.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', m
 
 let sdk = null;
 async function sendChat(text, prefillOnly = false, dictated = false) {
-  if (prefillOnly) { render(); const ta = $('form[data-form=chat] textarea'); ta.value = text; ta.focus(); return; }
+  if (prefillOnly) { render(); const ta = $('form[data-form=chat] textarea'); ta.value = text; grow(ta); ta.focus(); return; }
   if (busy) return;
   const key = getKey();
   if (!key) { settingsDialog(); toast('Bitte zuerst den API-Key eintragen'); return; }
