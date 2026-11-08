@@ -64,6 +64,7 @@ function render() {
   const v = $('#view');
   v.innerHTML = { today: viewToday, tasks: viewTasks, notes: viewNotes, chat: viewChat }[tab]();
   bind(v);
+  const badge = $('#contacts-badge'); if (badge) badge.textContent = allowed().length || '';
   if (tab === 'chat') scrollChat();
 }
 
@@ -375,10 +376,9 @@ function settingsDialog() {
     <div class="hint">Wird nur auf diesem Gerät gespeichert und direkt an api.anthropic.com gesendet. Key erstellen: console.anthropic.com → API Keys.</div>
     <div class="row"><label>Modell<select name="model">${Object.entries(MODELS).map(([k, l]) => `<option value="${k}" ${k === s.model ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <label>Gründlichkeit<select name="effort">${[['low', 'Schnell'], ['medium', 'Ausgewogen'], ['high', 'Gründlich']].map(([k, l]) => `<option value="${k}" ${k === s.effort ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
-    <h3 style="margin-top:6px">Diktat & WhatsApp</h3>
+    <h3 style="margin-top:6px">Diktat</h3>
     <label class="cb"><input type="checkbox" name="autoSend" ${s.autoSend ? 'checked' : ''}> Diktat nach dem Sprechen automatisch an Claudia senden</label>
     <label class="cb"><input type="checkbox" name="speak" ${s.speak ? 'checked' : ''}> Claudias Antwort nach einem Diktat vorlesen</label>
-    <button class="btn ghost" value="contacts" formnovalidate>Kontakte für Claudia (${allowed().length} von ${S.contacts.length} freigegeben)</button>
     <h3 style="margin-top:6px">Erinnerungen</h3>
     <div class="hint">Benachrichtigung zur eingetragenen Uhrzeit, solange Claudia geöffnet ist (auch im Hintergrund-Tab).</div>
     <button class="btn ghost" value="notify" formnovalidate>${'Notification' in window && Notification.permission === 'granted' ? 'Benachrichtigungen sind aktiv ✓' : 'Benachrichtigungen erlauben'}</button>
@@ -389,7 +389,6 @@ function settingsDialog() {
     (v, fd) => {
       if (v === 'export') return exportData(), false;
       if (v === 'import') return importData(), false;
-      if (v === 'contacts') { setTimeout(contactsDialog); return; }
       if (v === 'notify') { Notification?.requestPermission().then(p => toast(p === 'granted' ? 'Benachrichtigungen aktiv' : 'Nicht erlaubt')); return false; }
       if (v !== 'ok') return;
       Object.assign(s, { name: fd.get('name').trim(), model: fd.get('model'), effort: fd.get('effort'), autoSend: fd.has('autoSend'), speak: fd.has('speak') });
@@ -442,7 +441,10 @@ function contactsDialog() {
       }
     });
   // Häkchen sofort speichern, Suche filtert ohne Neuaufbau
-  const count = () => { const el = $('#ccount'); if (el) el.textContent = `${allowed().length} von ${S.contacts.length} Kontakten freigegeben`; };
+  const count = () => {
+    const el = $('#ccount'); if (el) el.textContent = `${allowed().length} von ${S.contacts.length} Kontakten freigegeben`;
+    const b = $('#contacts-badge'); if (b) b.textContent = allowed().length || '';
+  };
   const filter = () => {
     const q = norm(contactQuery);
     dlg.querySelectorAll('.crow').forEach(r => { r.hidden = !!q && !r.dataset.q.includes(q); });
@@ -727,6 +729,7 @@ function checkReminders() {
 // ---------- Start ----------
 document.querySelectorAll('.tabbar button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));
 $('#btn-settings').addEventListener('click', settingsDialog);
+$('#btn-contacts').addEventListener('click', contactsDialog);
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 window.addEventListener('storage', () => { S = load(); render(); });
 render();

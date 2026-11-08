@@ -164,3 +164,7 @@ dialog::backdrop { background: rgba(10,20,20,.45); }
 #toast.show { opacity: 1; }
 .mini.edit:hover { color: var(--accent); }
 .crow .pill { font-size: 11px; vertical-align: 1px; }
+.top-actions { justify-self: end; display: flex; align-items: center; gap: 2px; }
+#btn-contacts { position: relative; display: grid; place-items: center; }
+.badge { position: absolute; top: 0; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+.badge:empty { display: none; }
