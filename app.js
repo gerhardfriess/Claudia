@@ -176,10 +176,13 @@ function viewChat() {
 // ---------- Nachrichten-Entwürfe (WhatsApp) ----------
 const DICT = '[Diktiert] ';
 const norm = s => String(s || '').trim().toLowerCase();
+// Nur angehakte (freigegebene) Kontakte sind für Claudia sichtbar
+const allowed = () => S.contacts.filter(c => c.on !== false);
 function findContact(name) {
   const n = norm(name); if (!n) return null;
-  const exact = S.contacts.find(c => norm(c.name) === n); if (exact) return exact;
-  const part = S.contacts.filter(c => norm(c.name).includes(n) || n.includes(norm(c.name)));
+  const list = allowed();
+  const exact = list.find(c => norm(c.name) === n); if (exact) return exact;
+  const part = list.filter(c => norm(c.name).includes(n) || n.includes(norm(c.name)));
   return part.length === 1 ? part[0] : null;
 }
 // WhatsApp braucht die Nummer international ohne + und ohne 00 (z. B. 4917612345678)
@@ -315,7 +318,7 @@ function openDialog(html, onSubmit) {
   dlg.innerHTML = `<form class="dlg" method="dialog">${html}</form>`;
   const f = dlg.querySelector('form');
   f.addEventListener('submit', e => { const r = onSubmit(e.submitter?.value, new FormData(f)); if (r === false) e.preventDefault(); else render(); });
-  dlg.showModal();
+  if (!dlg.open) dlg.showModal();
 }
 function taskDialog(t) {
   if (!t) return;
@@ -353,7 +356,7 @@ function settingsDialog() {
     <h3 style="margin-top:6px">Diktat & WhatsApp</h3>
     <label class="cb"><input type="checkbox" name="autoSend" ${s.autoSend ? 'checked' : ''}> Diktat nach dem Sprechen automatisch an Claudia senden</label>
     <label class="cb"><input type="checkbox" name="speak" ${s.speak ? 'checked' : ''}> Claudias Antwort nach einem Diktat vorlesen</label>
-    <button class="btn ghost" value="contacts" formnovalidate>Kontakte für WhatsApp (${S.contacts.length})</button>
+    <button class="btn ghost" value="contacts" formnovalidate>Kontakte für Claudia (${allowed().length} von ${S.contacts.length} freigegeben)</button>
     <h3 style="margin-top:6px">Erinnerungen</h3>
     <div class="hint">Benachrichtigung zur eingetragenen Uhrzeit, solange Claudia geöffnet ist (auch im Hintergrund-Tab).</div>
     <button class="btn ghost" value="notify" formnovalidate>${'Notification' in window && Notification.permission === 'granted' ? 'Benachrichtigungen sind aktiv ✓' : 'Benachrichtigungen erlauben'}</button>
@@ -371,37 +374,104 @@ function settingsDialog() {
       setKey(fd.get('key').trim()); save(); toast('Gespeichert');
     });
 }
+let contactQuery = '';
 function contactsDialog() {
   const canPick = 'contacts' in navigator && 'select' in (navigator.contacts || {});
   const rows = [...S.contacts].sort((a, b) => a.name.localeCompare(b.name, 'de')).map(c =>
-    `<div class="crow"><div><b>${esc(c.name)}</b><div class="hint">${esc(c.phone)}${waNumber(c.phone) ? '' : ' ⚠︎ bitte mit +Ländervorwahl'}</div></div>
-     <button class="mini" value="del:${c.id}" formnovalidate aria-label="Löschen">✕</button></div>`).join('');
-  openDialog(`<h3>Kontakte für WhatsApp</h3>
-    <div class="hint">Nummer immer mit Ländervorwahl, z. B. +49 176 1234567 oder +34 612 345 678. Claudia sucht Empfänger hier nach Namen.</div>
-    <div class="clist">${rows || '<div class="hint">Noch keine Kontakte.</div>'}</div>
+    `<div class="crow ${c.on === false ? 'off' : ''}" data-q="${esc(norm(c.name + ' ' + c.phone))}">
+       <label class="cb"><input type="checkbox" data-cid="${c.id}" ${c.on === false ? '' : 'checked'}>
+       <span><b>${esc(c.name)}</b><span class="hint"> ${esc(c.phone)}${waNumber(c.phone) ? '' : ' ⚠︎ ohne +Ländervorwahl'}</span></span></label>
+       <button class="mini" value="del:${c.id}" formnovalidate aria-label="Löschen">✕</button></div>`).join('');
+  openDialog(`<h3>Kontakte für Claudia</h3>
+    <div class="hint">Nur <b>angehakte</b> Kontakte kann Claudia sehen und als Empfänger nutzen. Alle anderen bleiben unsichtbar für sie und werden nie an die KI gesendet.</div>
+    <div class="ccount hint" id="ccount"></div>
+    ${S.contacts.length ? `<input type="search" id="cq" placeholder="Kontakt suchen …" value="${esc(contactQuery)}">
+    <div class="chips"><button type="button" class="chip" data-call="1">Alle sichtbaren anhaken</button><button type="button" class="chip" data-call="0">Alle sichtbaren abwählen</button></div>` : ''}
+    <div class="clist">${rows || '<div class="hint">Noch keine Kontakte. Importiere dein Adressbuch als vCard-Datei (.vcf) oder trag einzelne Kontakte ein.</div>'}</div>
     <div class="row"><input type="text" name="cname" placeholder="Name (z. B. Maria)"><input type="text" name="cphone" placeholder="+49 …" inputmode="tel"></div>
-    <div class="actions">${canPick ? '<button class="btn ghost" value="pick" formnovalidate>Aus Handy-Kontakten</button>' : ''}
-    <button class="btn ghost" value="add" formnovalidate>Hinzufügen</button><button class="btn" value="cancel" formnovalidate>Fertig</button></div>`,
+    <div class="actions">
+    <button class="btn ghost" value="vcf" formnovalidate>Adressbuch importieren (.vcf)</button>
+    ${canPick ? '<button class="btn ghost" value="pick" formnovalidate>Aus Handy-Kontakten</button>' : ''}
+    <button class="btn ghost" value="add" formnovalidate>Hinzufügen</button><button class="btn" value="cancel" formnovalidate>Fertig</button></div>
+    <div class="hint">vCard exportieren: Android-Kontakte → Einstellungen → Exportieren · iPhone: Kontakte am PC über icloud.com → Exportieren · Outlook/Google Kontakte → Exportieren (vCard). Importierte Kontakte sind zunächst <b>nicht</b> freigegeben; hake an, wen Claudia kennen darf.</div>`,
     (v, fd) => {
       if (v?.startsWith('del:')) { S.contacts = S.contacts.filter(c => c.id !== v.slice(4)); save(); setTimeout(contactsDialog); return; }
       if (v === 'add') {
         const name = fd.get('cname').trim(), phone = fd.get('cphone').trim();
         if (!name || !phone) { toast('Name und Nummer eintragen'); return false; }
-        saveContact(name, phone); setTimeout(contactsDialog); return;
+        saveContact(name, phone, true); setTimeout(contactsDialog); return;
       }
+      if (v === 'vcf') { importVcf(); return false; }
       if (v === 'pick') {
         navigator.contacts.select(['name', 'tel'], { multiple: true }).then(list => {
-          let n = 0; for (const p of list) if (p.name?.[0] && p.tel?.[0]) { saveContact(p.name[0], p.tel[0]); n++; }
-          toast(`${n} Kontakt(e) übernommen`); contactsDialog();
+          let n = 0; for (const p of list) if (p.name?.[0] && p.tel?.[0]) { saveContact(p.name[0], p.tel[0], true); n++; }
+          toast(`${n} Kontakt(e) übernommen und freigegeben`); contactsDialog();
         }).catch(() => {});
         return;
       }
     });
+  // Häkchen sofort speichern, Suche filtert ohne Neuaufbau
+  const count = () => { const el = $('#ccount'); if (el) el.textContent = `${allowed().length} von ${S.contacts.length} Kontakten freigegeben`; };
+  const filter = () => {
+    const q = norm(contactQuery);
+    dlg.querySelectorAll('.crow').forEach(r => { r.hidden = !!q && !r.dataset.q.includes(q); });
+  };
+  dlg.querySelectorAll('input[data-cid]').forEach(cb => cb.addEventListener('change', () => {
+    const c = S.contacts.find(x => x.id === cb.dataset.cid); if (!c) return;
+    c.on = cb.checked; cb.closest('.crow').classList.toggle('off', !cb.checked); save(); count();
+  }));
+  dlg.querySelectorAll('[data-call]').forEach(b => b.addEventListener('click', () => {
+    const on = b.dataset.call === '1';
+    dlg.querySelectorAll('.crow:not([hidden]) input[data-cid]').forEach(cb => { if (cb.checked !== on) { cb.checked = on; cb.dispatchEvent(new Event('change')); } });
+  }));
+  $('#cq')?.addEventListener('input', e => { contactQuery = e.target.value; filter(); });
+  // Enter darf nicht den ersten Button im Formular (Löschen ✕) auslösen
+  dlg.querySelectorAll('input[type=text], input[type=search]').forEach(i => i.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return; e.preventDefault();
+    if (i.name === 'cname' || i.name === 'cphone') dlg.querySelector('button[value=add]').click();
+  }));
+  count(); filter();
 }
-function saveContact(name, phone) {
+function saveContact(name, phone, on) {
   const c = S.contacts.find(x => norm(x.name) === norm(name));
-  if (c) c.phone = phone; else S.contacts.push({ id: uid(), name: name.trim(), phone: phone.trim() });
+  if (c) { c.phone = phone; if (on !== undefined) c.on = on; }
+  else S.contacts.push({ id: uid(), name: name.trim(), phone: phone.trim(), on: on !== false });
   save(); return c || S.contacts[S.contacts.length - 1];
+}
+// vCard (.vcf) einlesen: Name (FN/N) + beste Telefonnummer (Handy bevorzugt)
+function parseVcf(txt) {
+  const lines = txt.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '').split(/\r?\n/);
+  const out = []; let cur = null;
+  const dec = s => s.replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\n/gi, ' ').replace(/\\\\/g, '\\').trim();
+  for (const line of lines) {
+    const i = line.indexOf(':'); if (i < 0) continue;
+    const head = line.slice(0, i), val = line.slice(i + 1), key = head.split(';')[0].replace(/^item\d+\./i, '').toUpperCase();
+    if (key === 'BEGIN') cur = { fn: '', n: '', tels: [] };
+    else if (!cur) continue;
+    else if (key === 'FN') cur.fn = dec(val);
+    else if (key === 'N') { const p = val.split(';').map(dec); cur.n = [p[1], p[0]].filter(Boolean).join(' '); }
+    else if (key === 'TEL') cur.tels.push({ num: val.replace(/^tel:/i, '').trim(), mobile: /CELL|MOBILE|IPHONE/i.test(head) });
+    else if (key === 'END') {
+      const name = cur.fn || cur.n, tel = cur.tels.find(t => t.mobile) || cur.tels[0];
+      // Deutsche Inlandsnummer (0171 …) → +49 171 …
+      if (name && tel) out.push({ name, phone: /^0[1-9]/.test(tel.num) ? '+49 ' + tel.num.slice(1) : tel.num });
+      cur = null;
+    }
+  }
+  return out;
+}
+function importVcf() {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.vcf,text/vcard,text/x-vcard';
+  inp.onchange = async () => {
+    try {
+      const list = parseVcf(await inp.files[0].text());
+      if (!list.length) throw 0;
+      let neu = 0;
+      for (const p of list) { const had = S.contacts.some(x => norm(x.name) === norm(p.name)); saveContact(p.name, p.phone); if (!had) { S.contacts[S.contacts.length - 1].on = false; neu++; } }
+      save(); toast(`${list.length} Kontakte gelesen, ${neu} neu (noch nicht freigegeben)`); contactsDialog();
+    } catch { toast('Keine Kontakte mit Telefonnummer in der Datei gefunden'); }
+  };
+  inp.click();
 }
 function exportData() {
   const blob = new Blob([JSON.stringify({ app: 'Claudia', version: 1, exported: new Date().toISOString(), tasks: S.tasks, notes: S.notes, contacts: S.contacts }, null, 2)], { type: 'application/json' });
@@ -418,7 +488,7 @@ function importData() {
       const merge = (mine, theirs, stamp) => { const m = new Map(mine.map(x => [x.id, x])); for (const x of theirs) { const o = m.get(x.id); if (!o || stamp(x) >= stamp(o)) m.set(x.id, x); } return [...m.values()]; };
       S.tasks = merge(S.tasks, d.tasks, x => x.doneAt || x.created || 0);
       S.notes = merge(S.notes, d.notes, x => x.updated || 0).sort((a, b) => b.updated - a.updated);
-      if (Array.isArray(d.contacts)) for (const c of d.contacts) if (c?.name && c?.phone) saveContact(c.name, c.phone);
+      if (Array.isArray(d.contacts)) for (const c of d.contacts) if (c?.name && c?.phone) saveContact(c.name, c.phone, c.on !== false);
       save(); dlg.close(); render(); toast(`Importiert: ${d.tasks.length} Aufgaben, ${d.notes.length} Notizen`);
     } catch { toast('Keine gültige Claudia-Datei'); }
   };
@@ -440,7 +510,7 @@ const TOOLS = [
     input_schema: { type: 'object', properties: { title: { type: 'string' }, text: { type: 'string' } }, required: ['title', 'text'], additionalProperties: false } },
   { name: 'search_notes', description: 'Durchsucht die Notizen (leerer Suchbegriff = alle, neueste zuerst).',
     input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'], additionalProperties: false } },
-  { name: 'list_contacts', description: 'Listet die gespeicherten WhatsApp-Kontakte (Name, ob eine Nummer vorhanden ist).',
+  { name: 'list_contacts', description: 'Listet die Kontakte, die der Nutzer für dich freigegeben hat (Name, ob eine Nummer vorhanden ist). Andere Kontakte siehst du bewusst nicht.',
     input_schema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'save_contact', description: 'Speichert oder aktualisiert einen Kontakt mit Telefonnummer (international, z. B. +49…). Nur wenn der Nutzer eine Nummer nennt.',
     input_schema: { type: 'object', properties: { name: { type: 'string' }, phone: { type: 'string' } }, required: ['name', 'phone'], additionalProperties: false } },
@@ -479,11 +549,11 @@ function runTool(name, inp) {
       return S.notes.filter(n => !q || (n.title + ' ' + n.text).toLowerCase().includes(q)).slice(0, 20)
         .map(n => ({ id: n.id, title: n.title, text: n.text.slice(0, 1500), updated: new Date(n.updated).toISOString().slice(0, 10) }));
     }
-    case 'list_contacts': return S.contacts.map(c => ({ name: c.name, hat_nummer: !!waNumber(c.phone) }));
+    case 'list_contacts': return allowed().map(c => ({ name: c.name, hat_nummer: !!waNumber(c.phone) }));
     case 'save_contact': {
       need('name'); need('phone');
       if (!waNumber(inp.phone)) throw new Error('Nummer braucht die Ländervorwahl mit + (z. B. +49…). Frag den Nutzer nach dem Land.');
-      const c = saveContact(inp.name, inp.phone); return { name: c.name, gespeichert: true };
+      const c = saveContact(inp.name, inp.phone, true); return { name: c.name, gespeichert: true };
     }
     case 'prepare_message': {
       need('recipient'); need('text'); if (!inp.text.trim()) throw new Error('Text leer');
@@ -578,7 +648,7 @@ function checkReminders() {
 }
 
 // ---------- Start ----------
-document.querySelectorAll('.tabbar button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));
+document.querySelectorAll('.tabbar button, .topbar .avatar').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));
 $('#btn-settings').addEventListener('click', settingsDialog);
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 window.addEventListener('storage', () => { S = load(); render(); });
