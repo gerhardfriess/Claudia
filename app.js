@@ -23,7 +23,7 @@ function save() { saveLocal(); scheduleSync(); }
 const getKey = () => { try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; } };
 const setKey = k => { try { k ? localStorage.setItem(KEY_STORE, k) : localStorage.removeItem(KEY_STORE); } catch {} };
 
-// ---------- Sync PC ↔ Handy (verschlüsselt in einem privaten GitHub-Gist) ----------
+// ---------- Sync PC ↔ Handy (verschlüsselt in einem geheimen GitHub-Gist) ----------
 // Drei-Wege-Abgleich je Datensatz-ID gegen den Stand des letzten Syncs (BASE_STORE):
 // nur hier geändert → hier gewinnt, nur dort geändert → dort gewinnt, beide → dieses Gerät gewinnt.
 // Löschen wird erkannt, weil der Datensatz im letzten Stand noch da war.
@@ -524,7 +524,7 @@ function settingsDialog() {
       <div class="sync-state" id="sync-state">${esc(syncLabel())}</div>
       <div class="row"><button class="btn ghost" value="sync-now" formnovalidate>Jetzt synchronisieren</button><button class="btn danger" value="sync-off" formnovalidate>Sync hier beenden</button></div>`
     : `
-      <div class="hint">Einmal auf <b>jedem</b> Gerät einrichten, mit demselben Token und demselben Sync-Passwort. Die Daten liegen verschlüsselt in einem privaten Gist in deinem GitHub-Konto; ohne das Passwort kann sie niemand lesen.</div>
+      <div class="hint">Einmal auf <b>jedem</b> Gerät einrichten, mit demselben Token und demselben Sync-Passwort. Die Daten liegen verschlüsselt in einem geheimen (nicht öffentlich gelisteten) Gist in deinem GitHub-Konto; ohne das Sync-Passwort kann sie niemand lesen. Wähle ein gutes Passwort, das du sonst nirgends nutzt.</div>
       <div class="hint">1. <a href="https://github.com/settings/tokens/new?scopes=gist&description=Claudia%20Sync" target="_blank" rel="noopener">GitHub-Token erstellen</a> (nur Recht „gist“, Ablauf nach Wunsch) und hier einfügen.<br>2. Ein Sync-Passwort ausdenken (mind. 8 Zeichen) und auf allen Geräten gleich eintragen.</div>
       <label>GitHub-Token<input type="password" name="stoken" placeholder="ghp_…" autocomplete="off"></label>
       <label>Sync-Passwort<input type="password" name="spass" autocomplete="new-password"></label>
